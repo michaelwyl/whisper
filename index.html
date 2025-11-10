@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whisper Web - Speech to Text</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes pulse-ring {
+      0% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+      }
+      70% {
+        transform: scale(1);
+        box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+      }
+      100% {
+        transform: scale(0.95);
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+      }
+    }
+    .recording {
+      animation: pulse-ring 1.5s infinite;
+    }
+    .progress-bar {
+      transition: width 0.3s ease;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen py-8 px-4">
+  <div class="max-w-4xl mx-auto">
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <h1 class="text-4xl font-bold text-gray-800 mb-2">🎤 Whisper Web</h1>
+      <p class="text-gray-600">Browser-based Speech to Text</p>
+      <p class="text-sm text-gray-500 mt-2">🔒 100% Local Processing, Privacy Protected</p>
+    </div>
+
+    <!-- Main Card -->
+    <div class="bg-white rounded-lg shadow-lg p-8">
+      <!-- Model Selection -->
+      <div class="mb-6">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">
+          Select Model
+        </label>
+        <select id="modelSelect" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+          <option value="tiny">Tiny - Fast (Recommended)</option>
+          <option value="base" selected>Base - Good Balance</option>
+          <option value="small">Small - High Accuracy</option>
+        </select>
+        <p class="text-xs text-gray-500 mt-2">💡 Multilingual models support 100+ languages</p>
+      </div>
+
+      <!-- Download Progress -->
+      <div id="downloadProgress" class="mb-6 hidden">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-sm font-medium text-gray-700">Downloading Model</span>
+          <span id="downloadPercent" class="text-sm font-medium text-blue-600">0%</span>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-3">
+          <div id="downloadBar" class="progress-bar bg-blue-600 h-3 rounded-full" style="width: 0%"></div>
+        </div>
+        <p id="downloadSize" class="text-xs text-gray-500 mt-1">0 MB / 0 MB</p>
+      </div>
+
+      <!-- Recording Controls -->
+      <div class="mb-6">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">
+          Record Audio
+        </label>
+        <div class="flex gap-3">
+          <button id="recordBtn" class="flex-1 px-6 py-3 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+            ⏺️ Start Recording
+          </button>
+          <button id="stopBtn" class="flex-1 px-6 py-3 bg-gray-500 text-white rounded-lg font-medium hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+            ⏹️ Stop Recording
+          </button>
+        </div>
+      </div>
+
+      <!-- Audio Preview -->
+      <div id="mediaPreview" class="mb-6 hidden">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">
+          Preview
+        </label>
+        <audio id="audioPlayer" controls class="w-full"></audio>
+      </div>
+
+      <!-- Transcription Progress -->
+      <div id="transcribeProgress" class="mb-6 hidden">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-sm font-medium text-gray-700">Transcribing</span>
+          <span class="text-sm font-medium text-green-600">Processing...</span>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-3">
+          <div class="progress-bar bg-green-600 h-3 rounded-full animate-pulse" style="width: 100%"></div>
+        </div>
+      </div>
+
+      <!-- Transcript -->
+      <div class="mb-6">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">
+          Transcript
+        </label>
+        <textarea id="transcript" rows="8" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 resize-none" placeholder="Transcript will appear here..."></textarea>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="flex gap-3 mb-6">
+        <button id="copyBtn" class="flex-1 px-6 py-3 bg-indigo-500 text-white rounded-lg font-medium hover:bg-indigo-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+          📋 Copy Text
+        </button>
+        <button id="clearBtn" class="flex-1 px-6 py-3 bg-gray-500 text-white rounded-lg font-medium hover:bg-gray-600 transition-colors">
+          🗑️ Clear All
+        </button>
+      </div>
+
+      <!-- Status Messages -->
+      <div id="statusArea" class="space-y-2"></div>
+    </div>
+
+    <!-- Footer -->
+    <div class="text-center mt-8 text-sm text-gray-600">
+      <p>Powered by <a href="https://github.com/ggml-org/whisper.cpp" target="_blank" class="text-blue-600 hover:underline">whisper.cpp</a></p>
+      <p class="mt-1">All processing is done locally in your browser</p>
+    </div>
+  </div>
+
+  <script type="module">
+    import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+
+    // Configure Transformers.js
+    env.allowLocalModels = false;
+    env.useBrowserCache = true;
+
+    // State
+    let transcriber = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let currentAudioBlob = null;
+    let isRecording = false;
+    let isModelLoading = false;
+
+    // DOM Elements
+    const modelSelect = document.getElementById('modelSelect');
+    const downloadProgress = document.getElementById('downloadProgress');
+    const downloadBar = document.getElementById('downloadBar');
+    const downloadPercent = document.getElementById('downloadPercent');
+    const downloadSize = document.getElementById('downloadSize');
+
+    const recordBtn = document.getElementById('recordBtn');
+    const stopBtn = document.getElementById('stopBtn');
+
+    const mediaPreview = document.getElementById('mediaPreview');
+    const audioPlayer = document.getElementById('audioPlayer');
+
+    const transcribeProgress = document.getElementById('transcribeProgress');
+
+    const transcript = document.getElementById('transcript');
+    const copyBtn = document.getElementById('copyBtn');
+    const clearBtn = document.getElementById('clearBtn');
+
+    const statusArea = document.getElementById('statusArea');
+
+    // Model mapping
+    const MODEL_NAMES = {
+      tiny: 'Xenova/whisper-tiny',
+      base: 'Xenova/whisper-base',
+      small: 'Xenova/whisper-small',
+    };
+
+    // Status message helper
+    function showStatus(message, type = 'info') {
+      const statusDiv = document.createElement('div');
+      const colors = {
+        info: 'bg-blue-100 text-blue-800 border-blue-200',
+        success: 'bg-green-100 text-green-800 border-green-200',
+        error: 'bg-red-100 text-red-800 border-red-200',
+        warning: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+      };
+
+      statusDiv.className = `px-4 py-3 rounded-lg border ${colors[type]} text-sm`;
+      statusDiv.textContent = message;
+      statusArea.prepend(statusDiv);
+
+      setTimeout(() => {
+        statusDiv.remove();
+      }, 5000);
+    }
+
+    // Initialize transcriber with progress tracking
+    async function initTranscriber(modelName) {
+      if (isModelLoading) {
+        showStatus('Model is loading, please wait', 'warning');
+        return;
+      }
+
+      try {
+        isModelLoading = true;
+        const modelId = MODEL_NAMES[modelName];
+
+        showStatus(`Loading ${modelName} model...`, 'info');
+        downloadProgress.classList.remove('hidden');
+
+        transcriber = await pipeline('automatic-speech-recognition', modelId, {
+          progress_callback: (progress) => {
+            if (progress.status === 'downloading') {
+              const percent = Math.round((progress.loaded / progress.total) * 100);
+              const loadedMB = (progress.loaded / 1024 / 1024).toFixed(1);
+              const totalMB = (progress.total / 1024 / 1024).toFixed(1);
+
+              downloadBar.style.width = `${percent}%`;
+              downloadPercent.textContent = `${percent}%`;
+              downloadSize.textContent = `${loadedMB} MB / ${totalMB} MB`;
+            } else if (progress.status === 'progress') {
+              const percent = Math.round(progress.progress);
+              downloadBar.style.width = `${percent}%`;
+              downloadPercent.textContent = `${percent}%`;
+            }
+          },
+        });
+
+        downloadProgress.classList.add('hidden');
+        isModelLoading = false;
+        showStatus(`${modelName} model ready`, 'success');
+      } catch (error) {
+        downloadProgress.classList.add('hidden');
+        isModelLoading = false;
+        showStatus(`Initialization failed: ${error.message}`, 'error');
+        console.error('Model initialization error:', error);
+      }
+    }
+
+    // Model selection change
+    modelSelect.addEventListener('change', async () => {
+      const modelName = modelSelect.value;
+      transcriber = null;
+      await initTranscriber(modelName);
+    });
+
+    // Convert blob to readable format for Transformers.js
+    async function blobToBase64DataUrl(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    // Transcription function
+    async function transcribeAudio() {
+      if (!currentAudioBlob) {
+        showStatus('No audio to transcribe', 'error');
+        return;
+      }
+
+      if (!transcriber) {
+        await initTranscriber(modelSelect.value);
+        if (!transcriber) {
+          showStatus('Model not ready, please try again', 'error');
+          return;
+        }
+      }
+
+      try {
+        transcribeProgress.classList.remove('hidden');
+        transcript.value = '';
+
+        showStatus('Transcribing...', 'info');
+
+        const audioData = await blobToBase64DataUrl(currentAudioBlob);
+
+        const result = await transcriber(audioData, {
+          chunk_length_s: 30,
+          stride_length_s: 5,
+        });
+
+        transcript.value = result.text;
+        copyBtn.disabled = false;
+
+        transcribeProgress.classList.add('hidden');
+
+        showStatus('Transcription completed', 'success');
+      } catch (error) {
+        transcribeProgress.classList.add('hidden');
+        showStatus(`Transcription failed: ${error.message}`, 'error');
+        console.error('Transcription error:', error);
+      }
+    }
+
+    // Recording functionality
+    recordBtn.addEventListener('click', async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          currentAudioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+          const audioUrl = URL.createObjectURL(currentAudioBlob);
+          audioPlayer.src = audioUrl;
+          mediaPreview.classList.remove('hidden');
+
+          stream.getTracks().forEach(track => track.stop());
+
+          // Automatically start transcription
+          await transcribeAudio();
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+
+        recordBtn.disabled = true;
+        recordBtn.classList.add('recording');
+        stopBtn.disabled = false;
+
+        showStatus('Recording...', 'info');
+      } catch (error) {
+        showStatus(`Recording failed: ${error.message}`, 'error');
+        console.error('Recording error:', error);
+      }
+    });
+
+    stopBtn.addEventListener('click', () => {
+      if (mediaRecorder && isRecording) {
+        mediaRecorder.stop();
+        isRecording = false;
+
+        recordBtn.disabled = false;
+        recordBtn.classList.remove('recording');
+        stopBtn.disabled = true;
+
+        showStatus('Recording stopped', 'success');
+      }
+    });
+
+    // Copy to clipboard
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(transcript.value);
+        showStatus('Copied to clipboard', 'success');
+      } catch (error) {
+        showStatus('Copy failed', 'error');
+      }
+    });
+
+    // Clear all
+    clearBtn.addEventListener('click', () => {
+      currentAudioBlob = null;
+      audioChunks = [];
+      transcript.value = '';
+      audioPlayer.src = '';
+      mediaPreview.classList.add('hidden');
+      copyBtn.disabled = true;
+
+      if (mediaRecorder && isRecording) {
+        mediaRecorder.stop();
+        isRecording = false;
+        recordBtn.disabled = false;
+        recordBtn.classList.remove('recording');
+        stopBtn.disabled = true;
+      }
+
+      showStatus('Cleared', 'info');
+    });
+
+    // Initialize on load
+    window.addEventListener('load', async () => {
+      showStatus('Welcome to Whisper Web!', 'success');
+      showStatus('First time will download model, please be patient', 'info');
+      await initTranscriber('base');
+    });
+  </script>
+</body>
+</html>
