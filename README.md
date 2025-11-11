@@ -1,24 +1,25 @@
 # Whisper Web - Speech to Text
 
-A browser-based speech-to-text application powered by OpenAI's Whisper Large v3 model via the Groq API. Record audio directly in your browser and get fast, accurate transcriptions with support for multiple languages and code-switching.
+A browser-based speech-to-text application with **hybrid processing**: choose between fast API transcription (Whisper Large v3 via Groq) or private local WASM processing (Transformers.js). Features automatic fallback from API to WASM when rate limits are hit.
 
 ## Features
 
-- **Fast & Accurate** - Powered by Whisper Large v3 via Groq API (typically 3-8 seconds)
-- **Multilingual Support** - Excellent support for multiple languages including code-switching (e.g., Chinese + English technical terms)
-- **Audio Recording** - Record directly from your microphone
-- **Hybrid API Mode** - Use your own API key or shared backend with rate limiting
-- **Beautiful UI** - Modern, responsive design with Tailwind CSS
-- **Copy to Clipboard** - Easily copy transcription results
-- **Privacy Options** - Bring your own API key for unlimited access
+- **🔀 Hybrid Processing** - Choose your preferred mode:
+  - **⚡ API Mode**: Fast & accurate (3-8 seconds) using Whisper Large v3
+  - **🔒 WASM Mode**: 100% private local processing (15-30 seconds)
+- **🛡️ Automatic Fallback** - Seamlessly switch to WASM if API rate limit is exceeded
+- **🎤 Audio Recording** - Record directly from your microphone
+- **🌍 Multilingual Support** - Excellent for code-switching (e.g., Chinese + English)
+- **💾 Smart Caching** - WASM models cached in browser after first download
+- **🎨 Beautiful UI** - Modern, responsive design with Tailwind CSS
+- **📋 Copy to Clipboard** - Easy result sharing
 
 ## Quick Start
 
 ### Prerequisites
 
-- Node.js 16+ and npm (for local development)
 - Modern browser (Chrome 90+, Firefox 90+, Safari 15+, Edge 90+)
-- Groq API key (get free at https://console.groq.com) - optional if using shared backend
+- (Optional) Groq API key for API mode - get free at https://console.groq.com
 
 ### Installation
 
@@ -33,11 +34,7 @@ cd whisper-web-app
 npm install
 ```
 
-3. (Optional) Set up shared backend:
-   - Copy `.env.example` to `.env`
-   - Add your Groq API key: `GROQ_API_KEY=your_key_here`
-
-4. Start the development server:
+3. Start the development server:
 ```bash
 npm run dev
 ```
@@ -50,38 +47,61 @@ The application will open automatically at `http://localhost:3000`
 
 ## Usage Guide
 
-### 1. Configure API Settings
+### 1. Choose Your Processing Mode
 
-Click the **Settings** button to configure your API mode:
+Click **⚙️ Settings** to select your preferred mode:
 
-**Option 1: Use Your Own API Key (Recommended)**
-- Get a free Groq API key at https://console.groq.com
-- 20 requests per minute on free tier
-- Enter your API key in Settings
-- Your key is stored locally in your browser only
+#### 🔒 Local WASM Processing (Default)
+- **100% Private** - All processing in your browser
+- **No API Key Required** - Completely free
+- **Offline Capable** - Works without internet (after model download)
+- **Model Options**: Tiny (39MB), Base (74MB), Small (244MB)
+- **Speed**: 15-30 seconds per transcription
+- **Best for**: Privacy-conscious users, offline use
 
-**Option 2: Use Shared Backend**
-- Limited to 5 requests per hour per IP
-- No API key required
-- Requires server-side `GROQ_API_KEY` environment variable
+#### ⚡ API Mode (Recommended for Speed)
+- **5-10x Faster** - Typical transcription in 3-8 seconds
+- **Most Accurate** - Uses Whisper Large v3 model
+- **Multilingual Excellence** - Best for code-switching
+- **Requires API Key** - Free tier: 20 requests/minute
+- **Best for**: Fast results, multilingual audio
 
-### 2. Record Audio
+### 2. Enable Auto-Fallback (Recommended)
+
+Check the "Automatically fall back to WASM if API rate limit is exceeded" option in Settings. This ensures uninterrupted service:
+- Start with fast API processing
+- Automatically switch to WASM if rate limit hit
+- No manual intervention needed
+
+### 3. Record and Transcribe
 
 1. Click **"Start Recording"** button
 2. Allow microphone access when prompted
 3. Speak into your microphone
 4. Click **"Stop Recording"** when finished
-5. Transcription will start automatically
+5. Transcription starts automatically
+6. Results appear in the transcript box
 
-### 3. View Results
+### 4. Copy and Use
 
-- Results appear in the transcript box
-- Click **"Copy Text"** to copy to clipboard
+- Click **"Copy Text"** to copy transcription to clipboard
 - Click **"Clear All"** to reset and start over
 
-## Deployment to Vercel
+## Processing Modes Comparison
 
-### Method 1: Vercel CLI
+| Feature | API Mode | WASM Mode |
+|---------|----------|-----------|
+| Speed | ⚡ 3-8 seconds | 🐢 15-30 seconds |
+| Accuracy | ⭐⭐⭐⭐⭐ Large v3 | ⭐⭐⭐⭐ Base/Small |
+| Privacy | Audio sent to Groq | 100% local |
+| Cost | Free (20 RPM) | Free |
+| Setup | API key required | None |
+| Internet | Required | After model download |
+| Multilingual | Excellent | Good |
+
+## Deployment
+
+### Deploy to Vercel
 
 1. Install Vercel CLI:
 ```bash
@@ -93,31 +113,53 @@ npm install -g vercel
 vercel
 ```
 
-3. Add environment variable in Vercel dashboard:
-   - Go to Settings → Environment Variables
-   - Add `GROQ_API_KEY` with your Groq API key
-   - Redeploy to apply changes
+3. That's it! No environment variables needed.
 
-### Method 2: GitHub Integration
+### Deploy to Netlify
 
-1. Push your code to GitHub
-2. Import project in Vercel dashboard
-3. Add `GROQ_API_KEY` environment variable
-4. Deploy
-
-### Environment Variables
-
-For the shared backend to work, set this environment variable in Vercel:
-
-```
-GROQ_API_KEY=your_groq_api_key_here
+1. Build the project:
+```bash
+npm run build
 ```
 
-Get your free API key at: https://console.groq.com
+2. Drag the `dist` folder to [Netlify Drop](https://app.netlify.com/drop)
+
+Or use Netlify CLI:
+```bash
+npm install -g netlify-cli
+netlify deploy --prod --dir=dist
+```
+
+### Deploy to GitHub Pages
+
+1. Update `vite.config.js` to set the base path:
+```javascript
+export default defineConfig({
+  base: '/your-repo-name/',
+  // ... rest of config
+});
+```
+
+2. Build and deploy:
+```bash
+npm run build
+# Then push the dist folder to gh-pages branch
+```
+
+### Important: No Server Configuration Needed!
+
+This app works perfectly on any static hosting platform:
+- ✅ Vercel
+- ✅ Netlify
+- ✅ Cloudflare Pages
+- ✅ GitHub Pages
+- ✅ Any static file server
+
+**No backend required** - users bring their own API keys or use WASM mode!
 
 ## Building for Production
 
-Build the application for deployment:
+Build the application:
 
 ```bash
 npm run build
@@ -134,55 +176,54 @@ npm run preview
 ## Browser Requirements
 
 This application requires a modern browser with:
-- MediaRecorder API (for audio recording)
-- Fetch API (for API requests)
-- LocalStorage (for settings persistence)
+- **MediaRecorder API** (for audio recording)
+- **Web Audio API** (for audio processing)
+- **IndexedDB** (for WASM model caching)
+- **ES Modules** (for Transformers.js)
 
 **Supported Browsers:**
 - Chrome/Edge 90+
 - Firefox 90+
 - Safari 15+
 
-**Note:** HTTPS is required for microphone access. Use `npm run dev` for local testing or deploy to a secure server like Vercel.
+**Note:** HTTPS is required for microphone access. Use `npm run dev` for local testing or deploy to a secure server.
 
 ## API Details
 
-### Groq API (Whisper Large v3)
+### Groq API (API Mode)
 
 - **Model**: whisper-large-v3
-- **Speed**: Typically 3-8 seconds for transcription
-- **Accuracy**: Best-in-class for multilingual transcription
-- **Code-switching**: Excellent support for mixed language speech
+- **Speed**: Typically 3-8 seconds
+- **Accuracy**: Best-in-class multilingual
 - **Free Tier**: 20 requests per minute
-- **Pricing**: Very affordable for paid tiers
+- **Get Key**: https://console.groq.com
+- **Cost**: Very affordable paid tiers available
 
-### Rate Limiting (Shared Backend)
+### Transformers.js (WASM Mode)
 
-When using the shared backend mode:
-- 5 requests per hour per IP address
-- Rate limit headers included in response
-- In-memory tracking with automatic cleanup
+- **Models**: Xenova/whisper-tiny, base, small
+- **Speed**: 15-30 seconds (depends on model & device)
+- **Processing**: 100% local in browser
+- **Caching**: Models cached in IndexedDB
+- **Privacy**: Audio never leaves your device
 
 ## Technical Architecture
 
 - **Frontend**: Vanilla JavaScript (ES Modules)
 - **Build Tool**: Vite
 - **Styling**: Tailwind CSS (CDN)
-- **Speech Recognition**: Groq API (Whisper Large v3)
-- **Backend**: Vercel Serverless Functions
-- **Storage**: LocalStorage (for user settings)
-- **Audio Recording**: MediaRecorder API
+- **API Processing**: Groq API (Whisper Large v3)
+- **WASM Processing**: Transformers.js via CDN
+- **Storage**: LocalStorage (settings), IndexedDB (models)
+- **Audio**: MediaRecorder API
 
 ## File Structure
 
 ```
 whisper-web-app/
-├── index.html          # Main HTML file with UI and inline JS
-├── api/
-│   └── transcribe.js   # Vercel serverless function for shared backend
+├── index.html          # Single-page app with inline JS
 ├── package.json        # Dependencies and scripts
 ├── vite.config.js      # Vite configuration
-├── .env.example        # Environment variable template
 ├── README.md           # Documentation (this file)
 ├── start.sh            # macOS/Linux start script
 └── start.bat           # Windows start script
@@ -190,17 +231,22 @@ whisper-web-app/
 
 ## Security & Privacy
 
-### Using Your Own API Key
+### API Mode
 - API key stored in browser LocalStorage only
-- Never transmitted to the application server
-- Direct communication with Groq API from browser
-- Complete privacy for your audio data
+- Never sent to any server except Groq
+- Direct browser-to-Groq communication
+- Audio transmitted to Groq for processing
 
-### Using Shared Backend
-- Audio transmitted through your Vercel serverless function
-- Rate limited to prevent abuse
-- API key secured in server environment variables
-- Audio not stored or logged
+### WASM Mode
+- **100% Private** - All processing in browser
+- Audio never leaves your device
+- Models cached locally
+- No external API calls after model download
+
+### Best Practices
+- Use API mode for speed with your own key
+- Use WASM mode for maximum privacy
+- Enable auto-fallback for best of both worlds
 
 ## Troubleshooting
 
@@ -208,36 +254,55 @@ whisper-web-app/
 
 1. Grant microphone permissions in browser settings
 2. Ensure you're on HTTPS or localhost
-3. Check that no other application is using the microphone
+3. Check no other app is using the microphone
 
-### Transcription Not Working
+### API Mode Issues
 
-1. Verify audio is playing in the preview player
-2. Check API key is entered correctly (if using own key)
-3. Check rate limit hasn't been exceeded (if using shared backend)
-4. Check browser console for errors
-5. Verify internet connection
+**"API rate limit exceeded"**
+- Wait for rate limit to reset (1 minute)
+- Enable auto-fallback to use WASM automatically
+- Or get a paid Groq plan for higher limits
 
-### Rate Limit Exceeded
+**"Invalid API key"**
+- Verify key at console.groq.com
+- Check for extra spaces when pasting
+- Regenerate key if needed
 
-If using shared backend:
-1. Wait for the rate limit window to reset (1 hour)
-2. Consider using your own API key for unlimited access
-3. Get free API key at https://console.groq.com
+### WASM Mode Issues
 
-### API Errors
+**Model download fails**
+- Check internet connection
+- Try a smaller model (tiny instead of small)
+- Clear browser cache and retry
 
-1. Verify API key is valid (test at console.groq.com)
-2. Check Groq API status
-3. Ensure environment variables are set correctly in Vercel
-4. Check browser console for detailed error messages
+**Slow transcription**
+- Use tiny model for faster results
+- Close other browser tabs
+- Try API mode instead
 
-## Performance
+**Out of memory**
+- Close other browser tabs
+- Use smaller model (tiny or base)
+- Restart browser
 
-- **Transcription Speed**: 3-8 seconds for typical recordings
-- **Model Quality**: Whisper Large v3 (most accurate)
-- **Network Requirements**: Stable internet connection required
-- **Audio Length**: No strict limit, but shorter audio processes faster
+### General Issues
+
+**No transcription results**
+- Check audio is playing in preview
+- Try recording again
+- Check browser console for errors
+- Try switching processing modes
+
+## Performance Tips
+
+1. **For Speed**: Use API mode with your own key (20 RPM free)
+2. **For Privacy**: Use WASM mode with tiny or base model
+3. **For Balance**: Enable auto-fallback (API → WASM)
+4. **Model Selection** (WASM):
+   - Tiny: Fastest, good for clear speech
+   - Base: Best balance
+   - Small: Most accurate, slower
+5. **Audio Length**: Shorter recordings process faster in both modes
 
 ## Contributing
 
@@ -251,7 +316,8 @@ MIT License - feel free to use this project for personal or commercial purposes.
 
 - [OpenAI Whisper](https://github.com/openai/whisper) - Original Whisper model
 - [Groq](https://groq.com/) - Fast inference API
-- [Vercel](https://vercel.com/) - Hosting and serverless functions
+- [Transformers.js](https://huggingface.co/docs/transformers.js) - Browser ML runtime
+- [Hugging Face](https://huggingface.co/) - Model hosting
 - [Tailwind CSS](https://tailwindcss.com/) - UI styling
 
 ## Support
@@ -259,9 +325,9 @@ MIT License - feel free to use this project for personal or commercial purposes.
 For issues and questions:
 1. Check this README and troubleshooting section
 2. Review browser console for error messages
-3. Check Groq API status at https://status.groq.com
+3. Try switching between API and WASM modes
 4. Open an issue on GitHub with details
 
 ---
 
-Made with ❤️ using Whisper Large v3 and Groq API
+Made with ❤️ - Choose your own path: Speed (API) or Privacy (WASM)
