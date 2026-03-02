@@ -154,11 +154,8 @@
           Record Audio
         </label>
         <div class="flex gap-3">
-          <button id="recordBtn" class="flex-1 px-6 py-3 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          <button id="recordBtn" class="flex-1 px-6 py-3 bg-green-500 text-white rounded-lg font-medium hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
             ⏺️ Start Recording
-          </button>
-          <button id="stopBtn" class="flex-1 px-6 py-3 bg-gray-500 text-white rounded-lg font-medium hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-            ⏹️ Stop Recording
           </button>
         </div>
       </div>
@@ -257,7 +254,6 @@
     const downloadSize = document.getElementById('downloadSize');
 
     const recordBtn = document.getElementById('recordBtn');
-    const stopBtn = document.getElementById('stopBtn');
 
     const mediaPreview = document.getElementById('mediaPreview');
     const audioPlayer = document.getElementById('audioPlayer');
@@ -545,6 +541,19 @@
 
     // Recording functionality
     recordBtn.addEventListener('click', async () => {
+      if (isRecording) {
+        // Stop recording
+        mediaRecorder.stop();
+        isRecording = false;
+
+        recordBtn.textContent = '⏺️ Start Recording';
+        recordBtn.classList.remove('bg-red-500', 'hover:bg-red-600', 'recording');
+        recordBtn.classList.add('bg-green-500', 'hover:bg-green-600');
+
+        showStatus('Recording stopped', 'success');
+        return;
+      }
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorder = new MediaRecorder(stream);
@@ -569,27 +578,14 @@
         mediaRecorder.start();
         isRecording = true;
 
-        recordBtn.disabled = true;
-        recordBtn.classList.add('recording');
-        stopBtn.disabled = false;
+        recordBtn.textContent = '⏹️ Stop Recording';
+        recordBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
+        recordBtn.classList.add('bg-red-500', 'hover:bg-red-600', 'recording');
 
         showStatus('Recording...', 'info');
       } catch (error) {
         showStatus(`Recording failed: ${error.message}`, 'error');
         console.error('Recording error:', error);
-      }
-    });
-
-    stopBtn.addEventListener('click', () => {
-      if (mediaRecorder && isRecording) {
-        mediaRecorder.stop();
-        isRecording = false;
-
-        recordBtn.disabled = false;
-        recordBtn.classList.remove('recording');
-        stopBtn.disabled = true;
-
-        showStatus('Recording stopped', 'success');
       }
     });
 
@@ -615,9 +611,9 @@
       if (mediaRecorder && isRecording) {
         mediaRecorder.stop();
         isRecording = false;
-        recordBtn.disabled = false;
-        recordBtn.classList.remove('recording');
-        stopBtn.disabled = true;
+        recordBtn.textContent = '⏺️ Start Recording';
+        recordBtn.classList.remove('bg-red-500', 'hover:bg-red-600', 'recording');
+        recordBtn.classList.add('bg-green-500', 'hover:bg-green-600');
       }
 
       showStatus('Cleared', 'info');
