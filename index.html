@@ -435,6 +435,56 @@
       });
     }
 
+    // Convert audio blob to WAV for reliable API transcription
+    async function convertToWav(blob) {
+      const audioContext = new AudioContext();
+      const arrayBuffer = await blob.arrayBuffer();
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+      const numChannels = 1; // mono
+      const sampleRate = 16000; // 16kHz is ideal for Whisper
+      const offlineCtx = new OfflineAudioContext(numChannels, audioBuffer.duration * sampleRate, sampleRate);
+
+      const source = offlineCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(offlineCtx.destination);
+      source.start();
+
+      const rendered = await offlineCtx.startRendering();
+      const pcmData = rendered.getChannelData(0);
+
+      // Build WAV file
+      const wavBuffer = new ArrayBuffer(44 + pcmData.length * 2);
+      const view = new DataView(wavBuffer);
+
+      // WAV header
+      const writeString = (offset, str) => {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      };
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + pcmData.length * 2, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * numChannels * 2, true);
+      view.setUint16(32, numChannels * 2, true);
+      view.setUint16(34, 16, true); // bits per sample
+      writeString(36, 'data');
+      view.setUint32(40, pcmData.length * 2, true);
+
+      // Write PCM samples
+      for (let i = 0; i < pcmData.length; i++) {
+        const s = Math.max(-1, Math.min(1, pcmData[i]));
+        view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      }
+
+      await audioContext.close();
+      return new Blob([wavBuffer], { type: 'audio/wav' });
+    }
+
     // Transcription function (supports both API and WASM)
     async function transcribeAudio() {
       if (!currentAudioBlob) {
@@ -461,8 +511,9 @@
           try {
             showStatus('Transcribing with Whisper Large v3...', 'info');
 
+            const wavBlob = await convertToWav(currentAudioBlob);
             const formData = new FormData();
-            formData.append('file', currentAudioBlob, 'audio.webm');
+            formData.append('file', wavBlob, 'audio.wav');
             formData.append('model', 'whisper-large-v3');
 
             const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
