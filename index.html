@@ -177,6 +177,26 @@
         </div>
       </div>
 
+      <!-- Audio Level Meter -->
+      <div id="levelMeterSection" class="mb-6 hidden">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">
+          Audio Level
+        </label>
+        <canvas id="levelMeter" class="w-full rounded-lg bg-gray-100" height="32"></canvas>
+      </div>
+
+      <!-- File Upload -->
+      <div class="mb-6">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">
+          Upload Audio File
+        </label>
+        <div id="dropZone" class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors">
+          <p class="text-gray-500">Drag & drop an audio file here, or click to browse</p>
+          <p class="text-xs text-gray-400 mt-1">Supports MP3, WAV, WebM, M4A, OGG, FLAC</p>
+          <input type="file" id="fileInput" class="hidden" accept=".mp3,.wav,.webm,.m4a,.ogg,.flac,audio/*">
+        </div>
+      </div>
+
       <!-- Audio Preview -->
       <div id="mediaPreview" class="mb-6 hidden">
         <label class="block text-sm font-semibold text-gray-700 mb-2">
@@ -251,6 +271,9 @@
     let currentAudioBlob = null;
     let isRecording = false;
     let isModelLoading = false;
+    let audioAnalyser = null;
+    let analyserContext = null;
+    let levelAnimationId = null;
 
     // DOM Elements
     const settingsBtn = document.getElementById('settingsBtn');
@@ -272,6 +295,13 @@
 
     const languageSelect = document.getElementById('languageSelect');
     const recordBtn = document.getElementById('recordBtn');
+
+    const levelMeterSection = document.getElementById('levelMeterSection');
+    const levelMeter = document.getElementById('levelMeter');
+    const levelCtx = levelMeter.getContext('2d');
+
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
 
     const mediaPreview = document.getElementById('mediaPreview');
     const audioPlayer = document.getElementById('audioPlayer');
@@ -453,6 +483,110 @@
       }
     });
 
+    // Audio level meter
+    function startLevelMeter(stream) {
+      analyserContext = new AudioContext();
+      const source = analyserContext.createMediaStreamSource(stream);
+      audioAnalyser = analyserContext.createAnalyser();
+      audioAnalyser.fftSize = 256;
+      source.connect(audioAnalyser);
+
+      levelMeterSection.classList.remove('hidden');
+      levelMeter.width = levelMeter.offsetWidth;
+
+      const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+
+      function draw() {
+        levelAnimationId = requestAnimationFrame(draw);
+        audioAnalyser.getByteFrequencyData(dataArray);
+
+        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        const level = avg / 255;
+
+        const w = levelMeter.width;
+        const h = levelMeter.height;
+        levelCtx.clearRect(0, 0, w, h);
+
+        // Background
+        levelCtx.fillStyle = '#f3f4f6';
+        levelCtx.fillRect(0, 0, w, h);
+
+        // Level bar with green-yellow-red gradient
+        const barWidth = level * w;
+        const gradient = levelCtx.createLinearGradient(0, 0, w, 0);
+        gradient.addColorStop(0, '#22c55e');
+        gradient.addColorStop(0.6, '#eab308');
+        gradient.addColorStop(1, '#ef4444');
+        levelCtx.fillStyle = gradient;
+        levelCtx.fillRect(0, 0, barWidth, h);
+      }
+
+      draw();
+    }
+
+    function stopLevelMeter() {
+      if (levelAnimationId) {
+        cancelAnimationFrame(levelAnimationId);
+        levelAnimationId = null;
+      }
+      if (analyserContext) {
+        analyserContext.close();
+        analyserContext = null;
+      }
+      audioAnalyser = null;
+      levelMeterSection.classList.add('hidden');
+    }
+
+    // File upload handlers
+    function handleFileUpload(file) {
+      if (!file || !file.type.startsWith('audio/')) {
+        showStatus('Please select a valid audio file', 'error');
+        return;
+      }
+
+      currentAudioBlob = file;
+      const audioUrl = URL.createObjectURL(file);
+      audioPlayer.src = audioUrl;
+      mediaPreview.classList.remove('hidden');
+
+      showStatus(`Loaded: ${file.name}`, 'success');
+      transcribeAudio();
+    }
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        handleFileUpload(e.target.files[0]);
+        fileInput.value = '';
+      }
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('border-blue-400', 'bg-blue-50');
+    });
+
+    dropZone.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('border-blue-400', 'bg-blue-50');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('border-blue-400', 'bg-blue-50');
+      if (e.dataTransfer.files.length > 0) {
+        handleFileUpload(e.dataTransfer.files[0]);
+      }
+    });
+
+    // Format seconds to MM:SS
+    function formatTimestamp(seconds) {
+      const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+      const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
     // Convert blob to base64 for WASM
     async function blobToBase64DataUrl(blob) {
       return new Promise((resolve, reject) => {
@@ -543,6 +677,8 @@
             const formData = new FormData();
             formData.append('file', wavBlob, 'audio.wav');
             formData.append('model', 'whisper-large-v3');
+            formData.append('response_format', 'verbose_json');
+            formData.append('timestamp_granularity[]', 'segment');
             const selectedLang = languageSelect.value;
             if (selectedLang !== 'auto') {
               formData.append('language', selectedLang);
@@ -569,7 +705,16 @@
               }
             }
 
-            result = await response.json();
+            const apiResult = await response.json();
+            if (apiResult.segments && apiResult.segments.length > 0) {
+              result = {
+                text: apiResult.segments.map(seg =>
+                  `[${formatTimestamp(seg.start)} - ${formatTimestamp(seg.end)}] ${seg.text.trim()}`
+                ).join('\n')
+              };
+            } else {
+              result = { text: apiResult.text };
+            }
           } catch (error) {
             if (error.message === 'FALLBACK_TO_WASM' && autoFallback) {
               // Fall back to WASM
@@ -598,6 +743,7 @@
           const wasmOptions = {
             chunk_length_s: 30,
             stride_length_s: 5,
+            return_timestamps: true,
           };
           const selectedLang = languageSelect.value;
           if (selectedLang !== 'auto') {
@@ -605,7 +751,15 @@
           }
           const wasmResult = await transcriber(audioData, wasmOptions);
 
-          result = { text: wasmResult.text };
+          if (wasmResult.chunks && wasmResult.chunks.length > 0) {
+            result = {
+              text: wasmResult.chunks.map(chunk =>
+                `[${formatTimestamp(chunk.timestamp[0])} - ${formatTimestamp(chunk.timestamp[1])}] ${chunk.text.trim()}`
+              ).join('\n')
+            };
+          } else {
+            result = { text: wasmResult.text };
+          }
 
           if (usedFallback) {
             showStatus('Transcription completed using WASM fallback', 'success');
@@ -633,6 +787,7 @@
         // Stop recording
         mediaRecorder.stop();
         isRecording = false;
+        stopLevelMeter();
 
         recordBtn.textContent = '⏺️ Start Recording';
         recordBtn.classList.remove('bg-red-500', 'hover:bg-red-600', 'recording');
@@ -674,6 +829,7 @@
         // Collect chunks every 250ms for reliable capture
         mediaRecorder.start(250);
         isRecording = true;
+        startLevelMeter(stream);
 
         recordBtn.textContent = '⏹️ Stop Recording';
         recordBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
@@ -708,6 +864,7 @@
       if (mediaRecorder && isRecording) {
         mediaRecorder.stop();
         isRecording = false;
+        stopLevelMeter();
         recordBtn.textContent = '⏺️ Start Recording';
         recordBtn.classList.remove('bg-red-500', 'hover:bg-red-600', 'recording');
         recordBtn.classList.add('bg-green-500', 'hover:bg-green-600');
