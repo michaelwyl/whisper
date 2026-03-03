@@ -677,8 +677,6 @@
             const formData = new FormData();
             formData.append('file', wavBlob, 'audio.wav');
             formData.append('model', 'whisper-large-v3');
-            formData.append('response_format', 'verbose_json');
-            formData.append('timestamp_granularity[]', 'segment');
             const selectedLang = languageSelect.value;
             if (selectedLang !== 'auto') {
               formData.append('language', selectedLang);
@@ -705,16 +703,7 @@
               }
             }
 
-            const apiResult = await response.json();
-            if (apiResult.segments && apiResult.segments.length > 0) {
-              result = {
-                text: apiResult.segments.map(seg =>
-                  `[${formatTimestamp(seg.start)} - ${formatTimestamp(seg.end)}] ${seg.text.trim()}`
-                ).join('\n')
-              };
-            } else {
-              result = { text: apiResult.text };
-            }
+            result = await response.json();
           } catch (error) {
             if (error.message === 'FALLBACK_TO_WASM' && autoFallback) {
               // Fall back to WASM
@@ -743,7 +732,6 @@
           const wasmOptions = {
             chunk_length_s: 30,
             stride_length_s: 5,
-            return_timestamps: true,
           };
           const selectedLang = languageSelect.value;
           if (selectedLang !== 'auto') {
@@ -751,15 +739,7 @@
           }
           const wasmResult = await transcriber(audioData, wasmOptions);
 
-          if (wasmResult.chunks && wasmResult.chunks.length > 0) {
-            result = {
-              text: wasmResult.chunks.map(chunk =>
-                `[${formatTimestamp(chunk.timestamp[0])} - ${formatTimestamp(chunk.timestamp[1])}] ${chunk.text.trim()}`
-              ).join('\n')
-            };
-          } else {
-            result = { text: wasmResult.text };
-          }
+          result = { text: wasmResult.text };
 
           if (usedFallback) {
             showStatus('Transcription completed using WASM fallback', 'success');
