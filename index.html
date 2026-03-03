@@ -28,64 +28,29 @@
     }
   </style>
 </head>
-<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen py-8 px-4">
-  <div class="max-w-4xl mx-auto">
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen py-4 px-4 lg:py-8">
+  <div class="max-w-7xl mx-auto">
     <!-- Header -->
-    <div class="text-center mb-8">
-      <div class="flex justify-between items-center mb-4">
+    <div class="text-center mb-4 lg:mb-8">
+      <div class="flex justify-between items-center mb-2">
         <div class="flex-1"></div>
-        <h1 class="text-4xl font-bold text-gray-800 flex-1">🎤 Whisper Web</h1>
+        <h1 class="text-2xl lg:text-4xl font-bold text-gray-800 flex-1">Whisper Web</h1>
         <div class="flex-1 flex justify-end">
-          <button id="settingsBtn" class="px-4 py-2 bg-gray-600 text-white rounded-lg font-medium hover:bg-gray-700 transition-colors">
-            ⚙️ Settings
+          <button id="settingsBtn" class="px-3 py-1.5 lg:px-4 lg:py-2 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors">
+            Settings
           </button>
         </div>
       </div>
-      <p class="text-gray-600">Browser-based Speech to Text</p>
-      <p class="text-sm text-gray-500 mt-2">🔒 <span id="modeIndicator">Local WASM Processing</span></p>
+      <p class="text-sm text-gray-500">Powered by Groq Whisper Large v3</p>
     </div>
 
     <!-- Settings Modal -->
     <div id="settingsModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div class="bg-white rounded-lg shadow-xl p-8 max-w-2xl w-full mx-4">
-        <h2 class="text-2xl font-bold text-gray-800 mb-6">⚙️ Settings</h2>
-
-        <!-- Processing Mode Selection -->
-        <div class="mb-6">
-          <label class="block text-sm font-semibold text-gray-700 mb-3">Processing Mode</label>
-          <div class="space-y-3">
-            <!-- WASM Mode -->
-            <label class="flex items-start p-4 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors" id="wasmModeLabel">
-              <input type="radio" name="processingMode" value="wasm" class="mt-1 mr-3" checked>
-              <div class="flex-1">
-                <div class="font-medium text-gray-900">🔒 Local WASM Processing (Free)</div>
-                <div class="text-sm text-gray-600 mt-1">
-                  • 100% private - all processing in your browser<br>
-                  • No API key required<br>
-                  • Slower processing (15-30 seconds)<br>
-                  • Models: Tiny, Base, Small
-                </div>
-              </div>
-            </label>
-
-            <!-- API Mode -->
-            <label class="flex items-start p-4 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors" id="apiModeLabel">
-              <input type="radio" name="processingMode" value="api" class="mt-1 mr-3">
-              <div class="flex-1">
-                <div class="font-medium text-gray-900">⚡ API Mode (Fast & Accurate)</div>
-                <div class="text-sm text-gray-600 mt-1">
-                  • 5-10x faster (3-8 seconds)<br>
-                  • Whisper Large v3 (most accurate)<br>
-                  • Excellent for multilingual & code-switching<br>
-                  • Requires Groq API key (20 RPM free tier)
-                </div>
-              </div>
-            </label>
-          </div>
-        </div>
+      <div class="bg-white rounded-lg shadow-xl p-6 lg:p-8 max-w-lg w-full mx-4">
+        <h2 class="text-xl font-bold text-gray-800 mb-4">Settings</h2>
 
         <!-- API Key Input -->
-        <div id="apiKeySection" class="mb-6 hidden">
+        <div class="mb-6">
           <label class="block text-sm font-semibold text-gray-700 mb-2">
             Groq API Key
           </label>
@@ -97,69 +62,35 @@
           />
           <p class="text-xs text-gray-500 mt-2">
             Get your free API key at <a href="https://console.groq.com" target="_blank" class="text-blue-600 hover:underline">console.groq.com</a>
-            <br>Your key is stored locally in your browser and never sent to our servers.
+            <br>Your key is stored locally in your browser.
           </p>
-        </div>
-
-        <!-- Model Selection (for WASM mode) -->
-        <div id="modelSection" class="mb-6">
-          <label class="block text-sm font-semibold text-gray-700 mb-2">
-            WASM Model Size
-          </label>
-          <select id="modelSelect" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-            <option value="tiny">Tiny - Fast (39MB)</option>
-            <option value="base" selected>Base - Balanced (74MB)</option>
-            <option value="small">Small - Accurate (244MB)</option>
-          </select>
-          <p class="text-xs text-gray-500 mt-2">💡 First download takes time, then cached in browser</p>
-        </div>
-
-        <!-- Auto-fallback Option -->
-        <div class="mb-6">
-          <label class="flex items-center">
-            <input type="checkbox" id="autoFallback" class="mr-2" checked>
-            <span class="text-sm text-gray-700">Automatically fall back to WASM if API rate limit is exceeded</span>
-          </label>
         </div>
 
         <!-- Action Buttons -->
         <div class="flex justify-end gap-3">
           <button id="closeSettingsBtn" class="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg font-medium hover:bg-gray-300 transition-colors">
-            Cancel
-          </button>
-          <button id="saveSettingsBtn" class="px-6 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors">
-            Save Settings
+            Close
           </button>
         </div>
       </div>
     </div>
 
-    <!-- Main Card -->
-    <div class="bg-white rounded-lg shadow-lg p-8">
-      <!-- Download Progress (for WASM models) -->
-      <div id="downloadProgress" class="mb-6 hidden">
-        <div class="flex justify-between items-center mb-2">
-          <span class="text-sm font-medium text-gray-700">Downloading Model</span>
-          <span id="downloadPercent" class="text-sm font-medium text-blue-600">0%</span>
-        </div>
-        <div class="w-full bg-gray-200 rounded-full h-3">
-          <div id="downloadBar" class="progress-bar bg-blue-600 h-3 rounded-full" style="width: 0%"></div>
-        </div>
-        <p id="downloadSize" class="text-xs text-gray-500 mt-1">0 MB / 0 MB</p>
-      </div>
+    <!-- Main Content: two-column in landscape, single column in portrait -->
+    <div class="flex flex-col lg:flex-row gap-4 lg:gap-6">
 
-      <!-- Recording Controls + Dropdowns Row -->
-      <div class="mb-6">
-        <div class="flex gap-3 items-end">
+      <!-- Left Column: Controls -->
+      <div class="bg-white rounded-lg shadow-lg p-4 lg:p-6 lg:w-1/3">
+        <!-- Recording Controls + Dropdowns -->
+        <div class="mb-4">
+          <button id="recordBtn" class="w-full px-6 py-3 bg-green-500 text-white rounded-lg font-medium hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+            Start Recording
+          </button>
+        </div>
+
+        <div class="flex gap-3 mb-4">
           <div class="flex-1">
-            <label class="block text-sm font-semibold text-gray-700 mb-2">Record</label>
-            <button id="recordBtn" class="w-full px-6 py-2 bg-green-500 text-white rounded-lg font-medium hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-              ⏺️ Start Recording
-            </button>
-          </div>
-          <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-2">Language</label>
-            <select id="languageSelect" class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+            <label class="block text-xs font-semibold text-gray-500 mb-1">Language</label>
+            <select id="languageSelect" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent">
               <option value="zh">中文</option>
               <option value="en">English</option>
               <option value="ja">日本語</option>
@@ -170,99 +101,80 @@
               <option value="auto">Auto</option>
             </select>
           </div>
-          <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-2">Task</label>
-            <select id="taskSelect" class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+          <div class="flex-1">
+            <label class="block text-xs font-semibold text-gray-500 mb-1">Task</label>
+            <select id="taskSelect" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent">
               <option value="transcribe">Transcribe</option>
               <option value="translate">Translate</option>
             </select>
           </div>
         </div>
-      </div>
 
-      <!-- Audio Level Meter -->
-      <div id="levelMeterSection" class="mb-6 hidden">
-        <label class="block text-sm font-semibold text-gray-700 mb-2">
-          Audio Level
-        </label>
-        <canvas id="levelMeter" class="w-full rounded-lg bg-gray-100" height="32"></canvas>
-      </div>
-
-      <!-- Audio Preview -->
-      <div id="mediaPreview" class="mb-6 hidden">
-        <label class="block text-sm font-semibold text-gray-700 mb-2">
-          Preview
-        </label>
-        <audio id="audioPlayer" controls class="w-full"></audio>
-      </div>
-
-      <!-- Transcription Progress -->
-      <div id="transcribeProgress" class="mb-6 hidden">
-        <div class="flex justify-between items-center mb-2">
-          <span class="text-sm font-medium text-gray-700">Transcribing</span>
-          <span class="text-sm font-medium text-green-600">Processing...</span>
+        <!-- Audio Level Meter -->
+        <div id="levelMeterSection" class="mb-4 hidden">
+          <label class="block text-xs font-semibold text-gray-500 mb-1">Audio Level</label>
+          <canvas id="levelMeter" class="w-full rounded-lg bg-gray-100" height="24"></canvas>
         </div>
-        <div class="w-full bg-gray-200 rounded-full h-3">
-          <div class="progress-bar bg-green-600 h-3 rounded-full animate-pulse" style="width: 100%"></div>
+
+        <!-- Audio Preview -->
+        <div id="mediaPreview" class="mb-4 hidden">
+          <label class="block text-xs font-semibold text-gray-500 mb-1">Preview</label>
+          <audio id="audioPlayer" controls class="w-full"></audio>
+        </div>
+
+        <!-- Transcription Progress -->
+        <div id="transcribeProgress" class="mb-4 hidden">
+          <div class="flex justify-between items-center mb-1">
+            <span class="text-xs font-medium text-gray-500">Processing</span>
+            <span class="text-xs font-medium text-green-600">...</span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-2">
+            <div class="progress-bar bg-green-600 h-2 rounded-full animate-pulse" style="width: 100%"></div>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="flex gap-3">
+          <button id="copyBtn" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+            Copy
+          </button>
+          <button id="clearBtn" class="flex-1 px-4 py-2 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors">
+            Clear
+          </button>
+        </div>
+
+        <!-- Status Area -->
+        <div class="mt-4">
+          <div id="statusArea" class="space-y-2"></div>
         </div>
       </div>
 
-      <!-- Transcript -->
-      <div class="mb-6">
-        <label class="block text-sm font-semibold text-gray-700 mb-2">
-          Transcript
-        </label>
+      <!-- Right Column: Transcript -->
+      <div class="bg-white rounded-lg shadow-lg p-4 lg:p-6 flex-1 flex flex-col">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">Transcript</label>
         <textarea
           id="transcript"
-          rows="8"
-          class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+          class="w-full flex-1 min-h-[200px] lg:min-h-0 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
           placeholder="Transcription will appear here..."
         ></textarea>
-      </div>
-
-      <!-- Action Buttons -->
-      <div class="flex gap-3">
-        <button id="copyBtn" class="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-          📋 Copy Text
-        </button>
-        <button id="clearBtn" class="flex-1 px-6 py-3 bg-gray-600 text-white rounded-lg font-medium hover:bg-gray-700 transition-colors">
-          🗑️ Clear All
-        </button>
-      </div>
-
-      <!-- Status Area -->
-      <div class="mt-6">
-        <div id="statusArea" class="space-y-2"></div>
       </div>
     </div>
 
     <!-- Footer -->
-    <div class="text-center mt-8 text-sm text-gray-600">
-      <p>Powered by <a href="https://groq.com" target="_blank" class="text-blue-600 hover:underline">Groq API</a> & <a href="https://huggingface.co/docs/transformers.js" target="_blank" class="text-blue-600 hover:underline">Transformers.js</a></p>
-      <p class="mt-1">Choose between fast API processing or private local processing</p>
+    <div class="text-center mt-4 lg:mt-8 text-xs text-gray-500">
+      <p>Powered by <a href="https://groq.com" target="_blank" class="text-blue-600 hover:underline">Groq API</a> &middot; Whisper Large v3</p>
     </div>
   </div>
 
-  <script type="module">
-    import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
-
-    // Configure Transformers.js for WASM mode
-    env.allowLocalModels = false;
-    env.useBrowserCache = true;
-
+  <script>
     // State
-    let processingMode = localStorage.getItem('processingMode') || 'wasm';
     let apiKey = localStorage.getItem('groqApiKey') || '';
-    let autoFallback = localStorage.getItem('autoFallback') !== 'false'; // default true
-    let selectedModel = localStorage.getItem('wasmModel') || 'base';
 
-    let transcriber = null;
     let micStream = null;
     let mediaRecorder = null;
     let audioChunks = [];
     let currentAudioBlob = null;
     let isRecording = false;
-    let isModelLoading = false;
     let audioAnalyser = null;
     let analyserContext = null;
     let levelAnimationId = null;
@@ -271,28 +183,15 @@
     const settingsBtn = document.getElementById('settingsBtn');
     const settingsModal = document.getElementById('settingsModal');
     const closeSettingsBtn = document.getElementById('closeSettingsBtn');
-    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
-    const modeIndicator = document.getElementById('modeIndicator');
-
-    const apiKeySection = document.getElementById('apiKeySection');
     const apiKeyInput = document.getElementById('apiKeyInput');
-    const modelSection = document.getElementById('modelSection');
-    const modelSelect = document.getElementById('modelSelect');
-    const autoFallbackCheckbox = document.getElementById('autoFallback');
-
-    const downloadProgress = document.getElementById('downloadProgress');
-    const downloadBar = document.getElementById('downloadBar');
-    const downloadPercent = document.getElementById('downloadPercent');
-    const downloadSize = document.getElementById('downloadSize');
 
     const languageSelect = document.getElementById('languageSelect');
+    const taskSelect = document.getElementById('taskSelect');
     const recordBtn = document.getElementById('recordBtn');
 
     const levelMeterSection = document.getElementById('levelMeterSection');
     const levelMeter = document.getElementById('levelMeter');
     const levelCtx = levelMeter.getContext('2d');
-
-    const taskSelect = document.getElementById('taskSelect');
 
     const mediaPreview = document.getElementById('mediaPreview');
     const audioPlayer = document.getElementById('audioPlayer');
@@ -302,50 +201,6 @@
     const copyBtn = document.getElementById('copyBtn');
     const clearBtn = document.getElementById('clearBtn');
     const statusArea = document.getElementById('statusArea');
-
-    // Model mapping for WASM
-    const MODEL_NAMES = {
-      tiny: 'Xenova/whisper-tiny',
-      base: 'Xenova/whisper-base',
-      small: 'Xenova/whisper-small',
-    };
-
-    // Initialize UI based on saved settings
-    function initializeUI() {
-      // Set radio buttons
-      document.querySelector(`input[name="processingMode"][value="${processingMode}"]`).checked = true;
-
-      // Set API key
-      apiKeyInput.value = apiKey;
-
-      // Set model selection
-      modelSelect.value = selectedModel;
-
-      // Set auto-fallback
-      autoFallbackCheckbox.checked = autoFallback;
-
-      // Show/hide appropriate sections
-      updateUIForMode();
-      updateModeIndicator();
-    }
-
-    function updateUIForMode() {
-      if (processingMode === 'api') {
-        apiKeySection.classList.remove('hidden');
-        modelSection.classList.add('hidden');
-      } else {
-        apiKeySection.classList.add('hidden');
-        modelSection.classList.remove('hidden');
-      }
-    }
-
-    function updateModeIndicator() {
-      if (processingMode === 'api') {
-        modeIndicator.textContent = 'Powered by Whisper Large v3';
-      } else {
-        modeIndicator.textContent = 'Local WASM Processing';
-      }
-    }
 
     // Status message helper
     function showStatus(message, type = 'info') {
@@ -357,7 +212,7 @@
         warning: 'bg-yellow-100 text-yellow-800 border-yellow-200',
       };
 
-      statusDiv.className = `px-4 py-3 rounded-lg border ${colors[type]} text-sm`;
+      statusDiv.className = `px-3 py-2 rounded-lg border ${colors[type]} text-xs`;
       statusDiv.textContent = message;
       statusArea.prepend(statusDiv);
 
@@ -366,51 +221,9 @@
       }, 5000);
     }
 
-    // Initialize WASM transcriber with progress tracking
-    async function initTranscriber(modelName) {
-      if (isModelLoading) {
-        showStatus('Model is loading, please wait', 'warning');
-        return;
-      }
-
-      try {
-        isModelLoading = true;
-        const modelId = MODEL_NAMES[modelName];
-
-        showStatus(`Loading ${modelName} model...`, 'info');
-        downloadProgress.classList.remove('hidden');
-
-        transcriber = await pipeline('automatic-speech-recognition', modelId, {
-          progress_callback: (progress) => {
-            if (progress.status === 'downloading') {
-              const percent = Math.round((progress.loaded / progress.total) * 100);
-              const loadedMB = (progress.loaded / 1024 / 1024).toFixed(1);
-              const totalMB = (progress.total / 1024 / 1024).toFixed(1);
-
-              downloadBar.style.width = `${percent}%`;
-              downloadPercent.textContent = `${percent}%`;
-              downloadSize.textContent = `${loadedMB} MB / ${totalMB} MB`;
-            } else if (progress.status === 'progress') {
-              const percent = Math.round(progress.progress);
-              downloadBar.style.width = `${percent}%`;
-              downloadPercent.textContent = `${percent}%`;
-            }
-          },
-        });
-
-        downloadProgress.classList.add('hidden');
-        isModelLoading = false;
-        showStatus(`${modelName} model ready`, 'success');
-      } catch (error) {
-        downloadProgress.classList.add('hidden');
-        isModelLoading = false;
-        showStatus(`Model initialization failed: ${error.message}`, 'error');
-        console.error('Model initialization error:', error);
-      }
-    }
-
     // Settings modal handlers
     settingsBtn.addEventListener('click', () => {
+      apiKeyInput.value = apiKey;
       settingsModal.classList.remove('hidden');
     });
 
@@ -426,52 +239,6 @@
           localStorage.setItem('groqApiKey', apiKey);
         }, 0);
       });
-    });
-
-    // Update UI when mode changes
-    document.querySelectorAll('input[name="processingMode"]').forEach(radio => {
-      radio.addEventListener('change', (e) => {
-        processingMode = e.target.value;
-        updateUIForMode();
-      });
-    });
-
-    saveSettingsBtn.addEventListener('click', async () => {
-      processingMode = document.querySelector('input[name="processingMode"]:checked').value;
-      apiKey = apiKeyInput.value.trim();
-      autoFallback = autoFallbackCheckbox.checked;
-      selectedModel = modelSelect.value;
-
-      // Validate API mode
-      if (processingMode === 'api' && !apiKey) {
-        showStatus('Please enter your Groq API key', 'error');
-        return;
-      }
-
-      // Save to localStorage
-      localStorage.setItem('processingMode', processingMode);
-      localStorage.setItem('groqApiKey', apiKey);
-      localStorage.setItem('autoFallback', autoFallback);
-      localStorage.setItem('wasmModel', selectedModel);
-
-      settingsModal.classList.add('hidden');
-      updateModeIndicator();
-
-      // Initialize WASM transcriber if in WASM mode
-      if (processingMode === 'wasm' && !transcriber) {
-        await initTranscriber(selectedModel);
-      }
-
-      showStatus('Settings saved successfully', 'success');
-    });
-
-    // Model selection change (for WASM mode)
-    modelSelect.addEventListener('change', async () => {
-      if (processingMode === 'wasm') {
-        selectedModel = modelSelect.value;
-        transcriber = null;
-        await initTranscriber(selectedModel);
-      }
     });
 
     // Audio level meter
@@ -498,11 +265,9 @@
         const h = levelMeter.height;
         levelCtx.clearRect(0, 0, w, h);
 
-        // Background
         levelCtx.fillStyle = '#f3f4f6';
         levelCtx.fillRect(0, 0, w, h);
 
-        // Level bar with green-yellow-red gradient
         const barWidth = level * w;
         const gradient = levelCtx.createLinearGradient(0, 0, w, 0);
         gradient.addColorStop(0, '#22c55e');
@@ -528,31 +293,14 @@
       levelMeterSection.classList.add('hidden');
     }
 
-    // Format seconds to MM:SS
-    function formatTimestamp(seconds) {
-      const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-      const s = Math.floor(seconds % 60).toString().padStart(2, '0');
-      return `${m}:${s}`;
-    }
-
-    // Convert blob to base64 for WASM
-    async function blobToBase64DataUrl(blob) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    }
-
     // Convert audio blob to WAV for reliable API transcription
     async function convertToWav(blob) {
       const audioContext = new AudioContext();
       const arrayBuffer = await blob.arrayBuffer();
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-      const numChannels = 1; // mono
-      const sampleRate = 16000; // 16kHz is ideal for Whisper
+      const numChannels = 1;
+      const sampleRate = 16000;
       const offlineCtx = new OfflineAudioContext(numChannels, audioBuffer.duration * sampleRate, sampleRate);
 
       const source = offlineCtx.createBufferSource();
@@ -563,11 +311,9 @@
       const rendered = await offlineCtx.startRendering();
       const pcmData = rendered.getChannelData(0);
 
-      // Build WAV file
       const wavBuffer = new ArrayBuffer(44 + pcmData.length * 2);
       const view = new DataView(wavBuffer);
 
-      // WAV header
       const writeString = (offset, str) => {
         for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
       };
@@ -576,16 +322,15 @@
       writeString(8, 'WAVE');
       writeString(12, 'fmt ');
       view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true); // PCM
+      view.setUint16(20, 1, true);
       view.setUint16(22, numChannels, true);
       view.setUint32(24, sampleRate, true);
       view.setUint32(28, sampleRate * numChannels * 2, true);
       view.setUint16(32, numChannels * 2, true);
-      view.setUint16(34, 16, true); // bits per sample
+      view.setUint16(34, 16, true);
       writeString(36, 'data');
       view.setUint32(40, pcmData.length * 2, true);
 
-      // Write PCM samples
       for (let i = 0; i < pcmData.length; i++) {
         const s = Math.max(-1, Math.min(1, pcmData[i]));
         view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
@@ -595,10 +340,16 @@
       return new Blob([wavBuffer], { type: 'audio/wav' });
     }
 
-    // Transcription function (supports both API and WASM)
+    // Transcription function
     async function transcribeAudio() {
       if (!currentAudioBlob) {
         showStatus('No audio to transcribe', 'error');
+        return;
+      }
+
+      if (!apiKey) {
+        showStatus('Please configure your API key in settings', 'error');
+        settingsModal.classList.remove('hidden');
         return;
       }
 
@@ -606,118 +357,49 @@
         transcribeProgress.classList.remove('hidden');
         transcript.value = '';
 
-        let result;
-        let usedFallback = false;
+        const task = taskSelect.value;
+        showStatus(task === 'translate' ? 'Translating...' : 'Transcribing...', 'info');
 
-        // Try API mode first (if enabled)
-        if (processingMode === 'api') {
-          if (!apiKey) {
-            showStatus('Please configure your API key in settings', 'error');
-            settingsModal.classList.remove('hidden');
-            transcribeProgress.classList.add('hidden');
-            return;
-          }
-
-          try {
-            const task = taskSelect.value;
-            showStatus(task === 'translate' ? 'Translating with Whisper Large v3...' : 'Transcribing with Whisper Large v3...', 'info');
-
-            const wavBlob = await convertToWav(currentAudioBlob);
-            const formData = new FormData();
-            formData.append('file', wavBlob, 'audio.wav');
-            formData.append('model', 'whisper-large-v3');
-            const selectedLang = languageSelect.value;
-            if (selectedLang !== 'auto') {
-              formData.append('language', selectedLang);
-            }
-
-            const apiEndpoint = task === 'translate'
-              ? 'https://api.groq.com/openai/v1/audio/translations'
-              : 'https://api.groq.com/openai/v1/audio/transcriptions';
-            const response = await fetch(apiEndpoint, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${apiKey}`,
-              },
-              body: formData,
-            });
-
-            if (!response.ok) {
-              const error = await response.json();
-
-              // Check for rate limit
-              if (response.status === 429 && autoFallback) {
-                showStatus('API rate limit exceeded, falling back to WASM...', 'warning');
-                usedFallback = true;
-                throw new Error('FALLBACK_TO_WASM');
-              } else {
-                throw new Error(error.error?.message || 'Transcription failed');
-              }
-            }
-
-            result = await response.json();
-          } catch (error) {
-            if (error.message === 'FALLBACK_TO_WASM' && autoFallback) {
-              // Fall back to WASM
-              processingMode = 'wasm';
-              usedFallback = true;
-              // Continue to WASM processing below
-            } else {
-              throw error;
-            }
-          }
+        const wavBlob = await convertToWav(currentAudioBlob);
+        const formData = new FormData();
+        formData.append('file', wavBlob, 'audio.wav');
+        formData.append('model', 'whisper-large-v3');
+        const selectedLang = languageSelect.value;
+        if (selectedLang !== 'auto') {
+          formData.append('language', selectedLang);
         }
 
-        // Use WASM mode (either selected or fallback)
-        if (processingMode === 'wasm' || usedFallback) {
-          const task = taskSelect.value;
-          showStatus(usedFallback ? 'Using local WASM processing...' : (task === 'translate' ? 'Translating with WASM...' : 'Transcribing with WASM...'), 'info');
+        const apiEndpoint = task === 'translate'
+          ? 'https://api.groq.com/openai/v1/audio/translations'
+          : 'https://api.groq.com/openai/v1/audio/transcriptions';
+        const response = await fetch(apiEndpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: formData,
+        });
 
-          // Initialize transcriber if not already done
-          if (!transcriber) {
-            await initTranscriber(selectedModel);
-            if (!transcriber) {
-              throw new Error('WASM model not ready, please try again');
-            }
-          }
-
-          const audioData = await blobToBase64DataUrl(currentAudioBlob);
-          const wasmOptions = {
-            chunk_length_s: 30,
-            stride_length_s: 5,
-          };
-          if (task === 'translate') {
-            wasmOptions.language = 'en';
-            wasmOptions.task = 'translate';
-          }
-          const selectedLang = languageSelect.value;
-          if (selectedLang !== 'auto' && task !== 'translate') {
-            wasmOptions.language = selectedLang;
-          }
-          const wasmResult = await transcriber(audioData, wasmOptions);
-
-          result = { text: wasmResult.text };
-
-          if (usedFallback) {
-            showStatus('Transcription completed using WASM fallback', 'success');
-          }
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error?.message || 'Request failed');
         }
 
+        const result = await response.json();
         transcript.value = result.text;
         copyBtn.disabled = false;
         transcribeProgress.classList.add('hidden');
 
-        // Auto-copy to clipboard
         try {
           await navigator.clipboard.writeText(result.text);
-          showStatus('Transcription completed and copied to clipboard', 'success');
+          showStatus('Done — copied to clipboard', 'success');
         } catch {
-          showStatus('Transcription completed (auto-copy failed)', 'success');
+          showStatus('Done', 'success');
         }
 
       } catch (error) {
         transcribeProgress.classList.add('hidden');
-        showStatus(`Transcription failed: ${error.message}`, 'error');
+        showStatus(`Failed: ${error.message}`, 'error');
         console.error('Transcription error:', error);
       }
     }
@@ -742,12 +424,11 @@
     // Recording functionality
     recordBtn.addEventListener('click', async () => {
       if (isRecording) {
-        // Stop recording
         mediaRecorder.stop();
         isRecording = false;
         stopLevelMeter();
 
-        recordBtn.textContent = '⏺️ Start Recording';
+        recordBtn.textContent = 'Start Recording';
         recordBtn.classList.remove('bg-red-500', 'hover:bg-red-600', 'recording');
         recordBtn.classList.add('bg-green-500', 'hover:bg-green-600');
 
@@ -776,16 +457,14 @@
           audioPlayer.src = audioUrl;
           mediaPreview.classList.remove('hidden');
 
-          // Automatically start transcription
           await transcribeAudio();
         };
 
-        // Collect chunks every 250ms for reliable capture
         mediaRecorder.start(250);
         isRecording = true;
         startLevelMeter(micStream);
 
-        recordBtn.textContent = '⏹️ Stop Recording';
+        recordBtn.textContent = 'Stop Recording';
         recordBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
         recordBtn.classList.add('bg-red-500', 'hover:bg-red-600', 'recording');
 
@@ -819,7 +498,7 @@
         mediaRecorder.stop();
         isRecording = false;
         stopLevelMeter();
-        recordBtn.textContent = '⏺️ Start Recording';
+        recordBtn.textContent = 'Start Recording';
         recordBtn.classList.remove('bg-red-500', 'hover:bg-red-600', 'recording');
         recordBtn.classList.add('bg-green-500', 'hover:bg-green-600');
       }
@@ -829,17 +508,10 @@
 
     // Initialize on load
     window.addEventListener('load', async () => {
-      initializeUI();
-      showStatus('Welcome to Whisper Web!', 'success');
-
-      // Keep mic stream alive to avoid initialization delay (e.g. DJI Mic 2)
       await initMicStream();
 
-      if (processingMode === 'wasm') {
-        showStatus('Initializing WASM mode - first time will download model', 'info');
-        await initTranscriber(selectedModel);
-      } else {
-        showStatus('API mode active - configure your key in settings', 'info');
+      if (!apiKey) {
+        showStatus('Set your Groq API key in Settings to get started', 'warning');
       }
     });
   </script>
