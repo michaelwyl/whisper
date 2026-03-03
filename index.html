@@ -770,8 +770,12 @@
         copyBtn.disabled = false;
         transcribeProgress.classList.add('hidden');
 
-        if (!usedFallback) {
-          showStatus('Transcription completed', 'success');
+        // Auto-copy to clipboard
+        try {
+          await navigator.clipboard.writeText(result.text);
+          showStatus('Transcription completed and copied to clipboard', 'success');
+        } catch {
+          showStatus('Transcription completed (auto-copy failed)', 'success');
         }
 
       } catch (error) {
