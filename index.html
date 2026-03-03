@@ -266,6 +266,7 @@
     let selectedModel = localStorage.getItem('wasmModel') || 'base';
 
     let transcriber = null;
+    let micStream = null;
     let mediaRecorder = null;
     let audioChunks = [];
     let currentAudioBlob = null;
@@ -765,6 +766,23 @@
       }
     }
 
+    // Initialize persistent mic stream
+    async function initMicStream() {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            sampleRate: 16000,
+          }
+        });
+        showStatus('Microphone ready', 'success');
+      } catch (error) {
+        showStatus(`Microphone access failed: ${error.message}`, 'error');
+        console.error('Mic init error:', error);
+      }
+    }
+
     // Recording functionality
     recordBtn.addEventListener('click', async () => {
       if (isRecording) {
@@ -782,14 +800,12 @@
       }
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            sampleRate: 16000,
-          }
-        });
-        mediaRecorder = new MediaRecorder(stream);
+        if (!micStream || !micStream.active) {
+          await initMicStream();
+        }
+        if (!micStream) return;
+
+        mediaRecorder = new MediaRecorder(micStream);
         audioChunks = [];
 
         mediaRecorder.ondataavailable = (event) => {
@@ -804,8 +820,6 @@
           audioPlayer.src = audioUrl;
           mediaPreview.classList.remove('hidden');
 
-          stream.getTracks().forEach(track => track.stop());
-
           // Automatically start transcription
           await transcribeAudio();
         };
@@ -813,7 +827,7 @@
         // Collect chunks every 250ms for reliable capture
         mediaRecorder.start(250);
         isRecording = true;
-        startLevelMeter(stream);
+        startLevelMeter(micStream);
 
         recordBtn.textContent = '⏹️ Stop Recording';
         recordBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
@@ -861,6 +875,9 @@
     window.addEventListener('load', async () => {
       initializeUI();
       showStatus('Welcome to Whisper Web!', 'success');
+
+      // Keep mic stream alive to avoid initialization delay (e.g. DJI Mic 2)
+      await initMicStream();
 
       if (processingMode === 'wasm') {
         showStatus('Initializing WASM mode - first time will download model', 'info');
