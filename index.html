@@ -160,6 +160,14 @@
       </div>
     </div>
 
+    <!-- Recent transcripts -->
+    <section class="bg-white rounded-lg shadow-lg p-4 lg:p-6 mt-4 lg:mt-6" aria-labelledby="historyHeading">
+      <h2 id="historyHeading" class="text-sm font-semibold text-gray-700">Recent history</h2>
+      <p id="historyHint" class="text-xs text-gray-500 mt-1 mb-4">Last 5 transcripts saved in this browser. Click one to restore its text.</p>
+      <p id="historyEmpty" class="text-sm text-gray-400">No transcripts yet. Your recent text will appear here.</p>
+      <ul id="historyList" class="space-y-2"></ul>
+    </section>
+
     <!-- Footer -->
     <div class="text-center mt-4 lg:mt-8 text-xs text-gray-500">
       <p>Powered by <a href="https://groq.com" target="_blank" class="text-blue-600 hover:underline">Groq API</a> &middot; Whisper Large v3</p>
@@ -168,7 +176,16 @@
 
   <script>
     // State
-    let apiKey = localStorage.getItem('groqApiKey') || '';
+    let apiKey = '';
+    try {
+      apiKey = localStorage.getItem('groqApiKey') || '';
+    } catch {
+      // Recording and in-memory history still work if browser storage is blocked.
+    }
+
+    const HISTORY_KEY = 'whisperTranscriptHistory';
+    const HISTORY_LIMIT = 5;
+    let transcriptHistory = [];
 
     let micStream = null;
     let mediaRecorder = null;
@@ -201,6 +218,72 @@
     const copyBtn = document.getElementById('copyBtn');
     const clearBtn = document.getElementById('clearBtn');
     const statusArea = document.getElementById('statusArea');
+    const historyList = document.getElementById('historyList');
+    const historyEmpty = document.getElementById('historyEmpty');
+    const historyHint = document.getElementById('historyHint');
+
+    function renderHistory() {
+      historyList.replaceChildren();
+      historyEmpty.classList.toggle('hidden', transcriptHistory.length > 0);
+
+      transcriptHistory.forEach(entry => {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'w-full text-left px-4 py-3 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors';
+
+        const date = document.createElement('span');
+        date.className = 'block text-xs text-gray-500 mb-1';
+        date.textContent = new Date(entry.savedAt).toLocaleString();
+
+        const preview = document.createElement('span');
+        preview.className = 'block text-sm text-gray-700 whitespace-pre-wrap break-words';
+        preview.textContent = entry.text.length > 180 ? `${entry.text.slice(0, 180)}…` : entry.text;
+
+        button.append(date, preview);
+        button.addEventListener('click', () => {
+          saveTranscript();
+          transcript.value = entry.text;
+          copyBtn.disabled = false;
+          transcript.focus();
+          transcript.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          showStatus('Transcript restored from history', 'success');
+        });
+        item.append(button);
+        historyList.append(item);
+      });
+    }
+
+    function saveTranscript() {
+      const text = transcript.value;
+      if (!text.trim() || transcriptHistory.some(entry => entry.text === text)) return;
+
+      transcriptHistory = [{ text, savedAt: Date.now() }, ...transcriptHistory].slice(0, HISTORY_LIMIT);
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(transcriptHistory));
+      } catch {
+        historyHint.textContent = 'Browser storage is unavailable or full. Recent text is only saved for this session.';
+      }
+      renderHistory();
+    }
+
+    try {
+      const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+      if (Array.isArray(saved)) {
+        transcriptHistory = saved.filter(entry =>
+          entry && typeof entry.text === 'string' && entry.text.trim() &&
+          Number.isFinite(entry.savedAt) && !Number.isNaN(new Date(entry.savedAt).getTime())
+        ).slice(0, HISTORY_LIMIT);
+      }
+    } catch {
+      // Ignore unreadable history so the app can still start normally.
+    }
+    renderHistory();
+
+    transcript.addEventListener('input', () => {
+      copyBtn.disabled = !transcript.value.trim();
+    });
+    window.addEventListener('pagehide', () => saveTranscript());
 
     // Status message helper
     function showStatus(message, type = 'info') {
@@ -236,7 +319,11 @@
       apiKeyInput.addEventListener(event, () => {
         setTimeout(() => {
           apiKey = apiKeyInput.value.trim();
-          localStorage.setItem('groqApiKey', apiKey);
+          try {
+            localStorage.setItem('groqApiKey', apiKey);
+          } catch {
+            showStatus('API key will only be available for this session', 'warning');
+          }
         }, 0);
       });
     });
@@ -355,7 +442,7 @@
 
       try {
         transcribeProgress.classList.remove('hidden');
-        transcript.value = '';
+        saveTranscript();
 
         const task = taskSelect.value;
         showStatus(task === 'translate' ? 'Translating...' : 'Transcribing...', 'info');
@@ -386,7 +473,12 @@
         }
 
         const result = await response.json();
+        if (typeof result.text !== 'string' || !result.text.trim()) {
+          throw new Error('No speech recognized. Your previous transcript has been kept.');
+        }
+        saveTranscript();
         transcript.value = result.text;
+        saveTranscript();
         copyBtn.disabled = false;
         transcribeProgress.classList.add('hidden');
 
@@ -436,6 +528,7 @@
         return;
       }
 
+      saveTranscript();
       try {
         if (!micStream || !micStream.active) {
           await initMicStream();
@@ -487,6 +580,7 @@
 
     // Clear all
     clearBtn.addEventListener('click', () => {
+      saveTranscript();
       currentAudioBlob = null;
       audioChunks = [];
       transcript.value = '';

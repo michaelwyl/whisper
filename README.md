@@ -13,6 +13,7 @@ A browser-based speech-to-text application with **hybrid processing**: choose be
 - **💾 Smart Caching** - WASM models cached in browser after first download
 - **🎨 Beautiful UI** - Modern, responsive design with Tailwind CSS
 - **📋 Copy to Clipboard** - Easy result sharing
+- **🕘 Recent History** - Keep the last 5 transcripts in this browser, including across refreshes. Click an entry below the transcript to restore its full text. Clear keeps history, and starting another transcription preserves the previous text until a new result is ready.
 
 ## Quick Start
 
