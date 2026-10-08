@@ -12,7 +12,7 @@ A browser-based speech-to-text application with **hybrid processing**: choose be
 - **🌍 Multilingual Support** - Excellent for code-switching (e.g., Chinese + English)
 - **💾 Smart Caching** - WASM models cached in browser after first download
 - **🎨 Beautiful UI** - Modern, responsive design with Tailwind CSS
-- **📋 Copy to Clipboard** - Easy result sharing
+- **📋 Copy to Clipboard** - Transcription results are copied automatically. Textbox edits are copied after a 500 ms pause (or when leaving the textbox), with support for Chinese input methods. If the browser blocks auto-copy, use the Copy button.
 - **🕘 Recent History** - Keep the last 5 transcripts in this browser, including across refreshes. Click an entry below the transcript to restore its full text. Clear keeps history, and starting another transcription preserves the previous text until a new result is ready.
 
 ## Quick Start

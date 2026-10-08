@@ -154,9 +154,11 @@
         <label class="block text-sm font-semibold text-gray-700 mb-2">Transcript</label>
         <textarea
           id="transcript"
+          aria-describedby="autoCopyStatus"
           class="w-full flex-1 min-h-[200px] lg:min-h-0 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
           placeholder="Transcription will appear here..."
         ></textarea>
+        <p id="autoCopyStatus" class="mt-2 text-xs text-gray-500" role="status">Edits are copied automatically after you pause typing.</p>
       </div>
     </div>
 
@@ -221,6 +223,44 @@
     const historyList = document.getElementById('historyList');
     const historyEmpty = document.getElementById('historyEmpty');
     const historyHint = document.getElementById('historyHint');
+    const autoCopyStatus = document.getElementById('autoCopyStatus');
+    let autoCopyTimer = null;
+    let autoCopyRevision = 0;
+    let isComposingTranscript = false;
+
+    function resetAutoCopy() {
+      clearTimeout(autoCopyTimer);
+      autoCopyTimer = null;
+      autoCopyRevision++;
+      autoCopyStatus.textContent = 'Edits are copied automatically after you pause typing.';
+    }
+
+    async function copyEditedTranscript() {
+      clearTimeout(autoCopyTimer);
+      autoCopyTimer = null;
+      if (isComposingTranscript || !transcript.value.trim()) return;
+
+      const revision = autoCopyRevision;
+      const text = transcript.value;
+      try {
+        await navigator.clipboard.writeText(text);
+        if (revision === autoCopyRevision) {
+          autoCopyStatus.textContent = 'Latest edits copied to clipboard.';
+        }
+      } catch {
+        if (revision === autoCopyRevision) {
+          autoCopyStatus.textContent = 'Auto-copy unavailable. Click Copy to copy your latest edits.';
+        }
+      }
+    }
+
+    function scheduleAutoCopy() {
+      resetAutoCopy();
+      copyBtn.disabled = !transcript.value.trim();
+      if (isComposingTranscript || copyBtn.disabled) return;
+      autoCopyStatus.textContent = 'Waiting to copy your latest edits…';
+      autoCopyTimer = setTimeout(copyEditedTranscript, 500);
+    }
 
     function renderHistory() {
       historyList.replaceChildren();
@@ -243,6 +283,7 @@
         button.append(date, preview);
         button.addEventListener('click', () => {
           saveTranscript();
+          resetAutoCopy();
           transcript.value = entry.text;
           copyBtn.disabled = false;
           transcript.focus();
@@ -280,8 +321,25 @@
     }
     renderHistory();
 
-    transcript.addEventListener('input', () => {
-      copyBtn.disabled = !transcript.value.trim();
+    transcript.addEventListener('input', event => {
+      if (event.isComposing) {
+        resetAutoCopy();
+        copyBtn.disabled = !transcript.value.trim();
+        return;
+      }
+      scheduleAutoCopy();
+    });
+    transcript.addEventListener('compositionstart', () => {
+      isComposingTranscript = true;
+      resetAutoCopy();
+    });
+    transcript.addEventListener('compositionend', () => {
+      isComposingTranscript = false;
+      scheduleAutoCopy();
+    });
+    transcript.addEventListener('blur', () => {
+      // Flush pending edits when the user leaves the textbox to paste elsewhere.
+      if (autoCopyTimer !== null) copyEditedTranscript();
     });
     window.addEventListener('pagehide', () => saveTranscript());
 
@@ -477,6 +535,7 @@
           throw new Error('No speech recognized. Your previous transcript has been kept.');
         }
         saveTranscript();
+        resetAutoCopy();
         transcript.value = result.text;
         saveTranscript();
         copyBtn.disabled = false;
@@ -570,6 +629,7 @@
 
     // Copy to clipboard
     copyBtn.addEventListener('click', async () => {
+      resetAutoCopy();
       try {
         await navigator.clipboard.writeText(transcript.value);
         showStatus('Copied to clipboard', 'success');
@@ -581,6 +641,7 @@
     // Clear all
     clearBtn.addEventListener('click', () => {
       saveTranscript();
+      resetAutoCopy();
       currentAudioBlob = null;
       audioChunks = [];
       transcript.value = '';
