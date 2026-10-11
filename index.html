@@ -81,10 +81,14 @@
       <!-- Left Column: Controls -->
       <div class="bg-white rounded-lg shadow-lg p-4 lg:p-6 lg:w-1/3">
         <!-- Recording Controls + Dropdowns -->
-        <div class="mb-4">
+        <div class="mb-4 space-y-2">
           <button id="recordBtn" class="w-full px-6 py-3 bg-green-500 text-white rounded-lg font-medium hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
             Start Recording
           </button>
+          <button id="continueBtn" class="hidden w-full px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+            Continue Recording
+          </button>
+          <p class="text-xs text-gray-500">Start a new transcript, or continue to add to the current text.</p>
         </div>
 
         <div class="flex gap-3 mb-4">
@@ -118,7 +122,7 @@
 
         <!-- Audio Preview -->
         <div id="mediaPreview" class="mb-4 hidden">
-          <label class="block text-xs font-semibold text-gray-500 mb-1">Preview</label>
+          <label class="block text-xs font-semibold text-gray-500 mb-1">Latest recording preview</label>
           <audio id="audioPlayer" controls class="w-full"></audio>
         </div>
 
@@ -138,7 +142,7 @@
           <button id="copyBtn" class="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
             Copy
           </button>
-          <button id="clearBtn" class="flex-1 px-4 py-2 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors">
+          <button id="clearBtn" class="flex-1 px-4 py-2 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
             Clear
           </button>
         </div>
@@ -191,9 +195,11 @@
 
     let micStream = null;
     let mediaRecorder = null;
-    let audioChunks = [];
     let currentAudioBlob = null;
+    let currentAudioUrl = null;
     let isRecording = false;
+    let isStartingRecording = false;
+    let isProcessing = false;
     let audioAnalyser = null;
     let analyserContext = null;
     let levelAnimationId = null;
@@ -207,6 +213,7 @@
     const languageSelect = document.getElementById('languageSelect');
     const taskSelect = document.getElementById('taskSelect');
     const recordBtn = document.getElementById('recordBtn');
+    const continueBtn = document.getElementById('continueBtn');
 
     const levelMeterSection = document.getElementById('levelMeterSection');
     const levelMeter = document.getElementById('levelMeter');
@@ -227,6 +234,25 @@
     let autoCopyTimer = null;
     let autoCopyRevision = 0;
     let isComposingTranscript = false;
+
+    function updateRecordingControls() {
+      const busy = isStartingRecording || isProcessing;
+      recordBtn.disabled = busy;
+      recordBtn.textContent = isRecording ? 'Stop Recording' : isProcessing ? 'Processing…' : 'Start Recording';
+      recordBtn.classList.toggle('bg-red-500', isRecording);
+      recordBtn.classList.toggle('hover:bg-red-600', isRecording);
+      recordBtn.classList.toggle('recording', isRecording);
+      recordBtn.classList.toggle('bg-green-500', !isRecording);
+      recordBtn.classList.toggle('hover:bg-green-600', !isRecording);
+      continueBtn.classList.toggle('hidden', isRecording || !transcript.value.trim());
+      continueBtn.disabled = busy || isRecording || !transcript.value.trim();
+      clearBtn.disabled = busy;
+      languageSelect.disabled = busy || isRecording;
+      taskSelect.disabled = busy || isRecording;
+      historyList.querySelectorAll('button').forEach(button => {
+        button.disabled = busy || isRecording;
+      });
+    }
 
     function resetAutoCopy() {
       clearTimeout(autoCopyTimer);
@@ -270,7 +296,8 @@
         const item = document.createElement('li');
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'w-full text-left px-4 py-3 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors';
+        button.disabled = isStartingRecording || isRecording || isProcessing;
+        button.className = 'w-full text-left px-4 py-3 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 
         const date = document.createElement('span');
         date.className = 'block text-xs text-gray-500 mb-1';
@@ -282,10 +309,12 @@
 
         button.append(date, preview);
         button.addEventListener('click', () => {
+          if (isStartingRecording || isRecording || isProcessing) return;
           saveTranscript();
           resetAutoCopy();
           transcript.value = entry.text;
           copyBtn.disabled = false;
+          updateRecordingControls();
           transcript.focus();
           transcript.scrollIntoView({ behavior: 'smooth', block: 'center' });
           showStatus('Transcript restored from history', 'success');
@@ -320,8 +349,10 @@
       // Ignore unreadable history so the app can still start normally.
     }
     renderHistory();
+    updateRecordingControls();
 
     transcript.addEventListener('input', event => {
+      updateRecordingControls();
       if (event.isComposing) {
         resetAutoCopy();
         copyBtn.disabled = !transcript.value.trim();
@@ -335,6 +366,7 @@
     });
     transcript.addEventListener('compositionend', () => {
       isComposingTranscript = false;
+      updateRecordingControls();
       scheduleAutoCopy();
     });
     transcript.addEventListener('blur', () => {
@@ -486,8 +518,8 @@
     }
 
     // Transcription function
-    async function transcribeAudio() {
-      if (!currentAudioBlob) {
+    async function transcribeAudio(audioBlob, { append, task, language }) {
+      if (!audioBlob) {
         showStatus('No audio to transcribe', 'error');
         return;
       }
@@ -502,16 +534,14 @@
         transcribeProgress.classList.remove('hidden');
         saveTranscript();
 
-        const task = taskSelect.value;
         showStatus(task === 'translate' ? 'Translating...' : 'Transcribing...', 'info');
 
-        const wavBlob = await convertToWav(currentAudioBlob);
+        const wavBlob = await convertToWav(audioBlob);
         const formData = new FormData();
         formData.append('file', wavBlob, 'audio.wav');
         formData.append('model', 'whisper-large-v3');
-        const selectedLang = languageSelect.value;
-        if (selectedLang !== 'auto') {
-          formData.append('language', selectedLang);
+        if (language !== 'auto') {
+          formData.append('language', language);
         }
 
         const apiEndpoint = task === 'translate'
@@ -536,22 +566,28 @@
         }
         saveTranscript();
         resetAutoCopy();
-        transcript.value = result.text;
+        // Use the current value so edits made while recording/processing are retained.
+        const existingText = transcript.value;
+        const separator = existingText.endsWith('\n') ? '' : '\n';
+        transcript.value = append && existingText.trim()
+          ? existingText + separator + result.text
+          : result.text;
         saveTranscript();
         copyBtn.disabled = false;
         transcribeProgress.classList.add('hidden');
 
         try {
-          await navigator.clipboard.writeText(result.text);
+          await navigator.clipboard.writeText(transcript.value);
           showStatus('Done — copied to clipboard', 'success');
         } catch {
           showStatus('Done', 'success');
         }
 
       } catch (error) {
-        transcribeProgress.classList.add('hidden');
         showStatus(`Failed: ${error.message}`, 'error');
         console.error('Transcription error:', error);
+      } finally {
+        transcribeProgress.classList.add('hidden');
       }
     }
 
@@ -572,60 +608,97 @@
       }
     }
 
-    // Recording functionality
-    recordBtn.addEventListener('click', async () => {
-      if (isRecording) {
-        mediaRecorder.stop();
-        isRecording = false;
-        stopLevelMeter();
-
-        recordBtn.textContent = 'Start Recording';
-        recordBtn.classList.remove('bg-red-500', 'hover:bg-red-600', 'recording');
-        recordBtn.classList.add('bg-green-500', 'hover:bg-green-600');
-
-        showStatus('Recording stopped', 'success');
-        return;
-      }
-
+    // Each segment has its own recorder, chunks, and transcription mode.
+    async function startRecording(append = false) {
+      if (isRecording || isStartingRecording || isProcessing) return;
+      if (append && !transcript.value.trim()) return;
       saveTranscript();
+      isStartingRecording = true;
+      updateRecordingControls();
       try {
         if (!micStream || !micStream.active) {
           await initMicStream();
         }
-        if (!micStream) return;
+        if (!micStream?.active) return;
 
-        mediaRecorder = new MediaRecorder(micStream);
-        audioChunks = [];
+        const recorder = new MediaRecorder(micStream);
+        const chunks = [];
+        const options = { append, task: taskSelect.value, language: languageSelect.value };
+        mediaRecorder = recorder;
 
-        mediaRecorder.ondataavailable = (event) => {
+        recorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
-            audioChunks.push(event.data);
+            chunks.push(event.data);
           }
         };
 
-        mediaRecorder.onstop = async () => {
-          currentAudioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
-          const audioUrl = URL.createObjectURL(currentAudioBlob);
-          audioPlayer.src = audioUrl;
-          mediaPreview.classList.remove('hidden');
-
-          await transcribeAudio();
+        recorder.onstop = async () => {
+          isRecording = false;
+          isProcessing = true;
+          stopLevelMeter();
+          updateRecordingControls();
+          try {
+            currentAudioBlob = new Blob(chunks, { type: recorder.mimeType });
+            if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+            currentAudioUrl = URL.createObjectURL(currentAudioBlob);
+            audioPlayer.src = currentAudioUrl;
+            mediaPreview.classList.remove('hidden');
+            await transcribeAudio(currentAudioBlob, options);
+          } catch (error) {
+            showStatus(`Recording failed: ${error.message}`, 'error');
+          } finally {
+            isProcessing = false;
+            mediaRecorder = null;
+            updateRecordingControls();
+          }
         };
 
-        mediaRecorder.start(250);
-        isRecording = true;
+        recorder.onerror = () => {
+          discardRecording();
+          showStatus('Recording failed. Your previous transcript has been kept.', 'error');
+        };
+
         startLevelMeter(micStream);
-
-        recordBtn.textContent = 'Stop Recording';
-        recordBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
-        recordBtn.classList.add('bg-red-500', 'hover:bg-red-600', 'recording');
-
-        showStatus('Recording...', 'info');
+        recorder.start(250);
+        isRecording = true;
+        showStatus(append ? 'Recording — adding to the current transcript...' : 'Recording...', 'info');
       } catch (error) {
+        discardRecording();
         showStatus(`Recording failed: ${error.message}`, 'error');
         console.error('Recording error:', error);
+      } finally {
+        isStartingRecording = false;
+        updateRecordingControls();
       }
+    }
+
+    function discardRecording() {
+      if (mediaRecorder) {
+        mediaRecorder.onstop = null;
+        mediaRecorder.ondataavailable = null;
+        mediaRecorder.onerror = null;
+        if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+        mediaRecorder = null;
+      }
+      isRecording = false;
+      isProcessing = false;
+      stopLevelMeter();
+      updateRecordingControls();
+    }
+
+    recordBtn.addEventListener('click', () => {
+      if (isStartingRecording || isProcessing) return;
+      if (!isRecording) return startRecording(false);
+      // Lock controls before the asynchronous stop event delivers the final audio.
+      isProcessing = true;
+      isRecording = false;
+      updateRecordingControls();
+      mediaRecorder.stop();
+      stopLevelMeter();
+      showStatus('Recording stopped', 'success');
     });
+
+    continueBtn.addEventListener('click', () => startRecording(true));
 
     // Copy to clipboard
     copyBtn.addEventListener('click', async () => {
@@ -640,24 +713,19 @@
 
     // Clear all
     clearBtn.addEventListener('click', () => {
+      if (isStartingRecording || isProcessing) return;
       saveTranscript();
       resetAutoCopy();
+      discardRecording();
       currentAudioBlob = null;
-      audioChunks = [];
+      if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+      currentAudioUrl = null;
       transcript.value = '';
       audioPlayer.src = '';
       mediaPreview.classList.add('hidden');
       copyBtn.disabled = true;
 
-      if (mediaRecorder && isRecording) {
-        mediaRecorder.stop();
-        isRecording = false;
-        stopLevelMeter();
-        recordBtn.textContent = 'Start Recording';
-        recordBtn.classList.remove('bg-red-500', 'hover:bg-red-600', 'recording');
-        recordBtn.classList.add('bg-green-500', 'hover:bg-green-600');
-      }
-
+      updateRecordingControls();
       showStatus('Cleared', 'info');
     });
 

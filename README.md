@@ -9,6 +9,7 @@ A browser-based speech-to-text application with **hybrid processing**: choose be
   - **🔒 WASM Mode**: 100% private local processing (15-30 seconds)
 - **🛡️ Automatic Fallback** - Seamlessly switch to WASM if API rate limit is exceeded
 - **🎤 Audio Recording** - Record directly from your microphone
+- **▶️ Continue Recording** - After transcription, choose Continue Recording to append another segment to the current text (including your edits), or Start Recording for a new transcript. Each added segment starts on a new line; history and automatic copying include the full text. Audio preview plays the latest segment. Recording controls wait for transcription to finish before accepting another segment.
 - **🌍 Multilingual Support** - Excellent for code-switching (e.g., Chinese + English)
 - **💾 Smart Caching** - WASM models cached in browser after first download
 - **🎨 Beautiful UI** - Modern, responsive design with Tailwind CSS
