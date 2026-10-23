@@ -1,7 +1,7 @@
 {
   "name": "whisper-web-app",
   "version": "1.0.0",
-  "description": "Browser-based speech-to-text application using whisper.cpp WASM",
+  "description": "Browser-based speech-to-text application using a self-hosted Whisper server",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,6 @@
   "keywords": [
     "whisper",
     "speech-to-text",
-    "wasm",
     "transcription"
   ],
   "author": "",

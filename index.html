@@ -32,47 +32,8 @@
   <div class="max-w-7xl mx-auto">
     <!-- Header -->
     <div class="text-center mb-4 lg:mb-8">
-      <div class="flex justify-between items-center mb-2">
-        <div class="flex-1"></div>
-        <h1 class="text-2xl lg:text-4xl font-bold text-gray-800 flex-1">Whisper Web</h1>
-        <div class="flex-1 flex justify-end">
-          <button id="settingsBtn" class="px-3 py-1.5 lg:px-4 lg:py-2 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors">
-            Settings
-          </button>
-        </div>
-      </div>
-      <p class="text-sm text-gray-500">Powered by Groq Whisper Large v3</p>
-    </div>
-
-    <!-- Settings Modal -->
-    <div id="settingsModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div class="bg-white rounded-lg shadow-xl p-6 lg:p-8 max-w-lg w-full mx-4">
-        <h2 class="text-xl font-bold text-gray-800 mb-4">Settings</h2>
-
-        <!-- API Key Input -->
-        <div class="mb-6">
-          <label class="block text-sm font-semibold text-gray-700 mb-2">
-            Groq API Key
-          </label>
-          <input
-            type="password"
-            id="apiKeyInput"
-            placeholder="Enter your Groq API key"
-            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-          <p class="text-xs text-gray-500 mt-2">
-            Get your free API key at <a href="https://console.groq.com" target="_blank" class="text-blue-600 hover:underline">console.groq.com</a>
-            <br>Your key is stored locally in your browser.
-          </p>
-        </div>
-
-        <!-- Action Buttons -->
-        <div class="flex justify-end gap-3">
-          <button id="closeSettingsBtn" class="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg font-medium hover:bg-gray-300 transition-colors">
-            Close
-          </button>
-        </div>
-      </div>
+      <h1 class="text-2xl lg:text-4xl font-bold text-gray-800 mb-2">Whisper Web</h1>
+      <p class="text-sm text-gray-500">Powered by a self-hosted Whisper server</p>
     </div>
 
     <!-- Main Content: two-column in landscape, single column in portrait -->
@@ -129,7 +90,7 @@
         <!-- Transcription Progress -->
         <div id="transcribeProgress" class="mb-4 hidden">
           <div class="flex justify-between items-center mb-1">
-            <span class="text-xs font-medium text-gray-500">Processing</span>
+            <span class="text-xs font-medium text-gray-500">Transcribing…</span>
             <span class="text-xs font-medium text-green-600">...</span>
           </div>
           <div class="w-full bg-gray-200 rounded-full h-2">
@@ -176,19 +137,16 @@
 
     <!-- Footer -->
     <div class="text-center mt-4 lg:mt-8 text-xs text-gray-500">
-      <p>Powered by <a href="https://groq.com" target="_blank" class="text-blue-600 hover:underline">Groq API</a> &middot; Whisper Large v3</p>
+      <p>Powered by self-hosted Whisper &middot; whisper.cpp</p>
     </div>
   </div>
 
   <script>
-    // State
-    let apiKey = '';
-    try {
-      apiKey = localStorage.getItem('groqApiKey') || '';
-    } catch {
-      // Recording and in-memory history still work if browser storage is blocked.
-    }
+    // Transcription server configuration
+    const TRANSCRIBE_URL = 'https://yilins-mac-mini.tail73950a.ts.net/v1/audio/transcriptions';
+    const TRANSCRIBE_TIMEOUT_MS = 120_000;
 
+    // State
     const HISTORY_KEY = 'whisperTranscriptHistory';
     const HISTORY_LIMIT = 5;
     let transcriptHistory = [];
@@ -205,11 +163,6 @@
     let levelAnimationId = null;
 
     // DOM Elements
-    const settingsBtn = document.getElementById('settingsBtn');
-    const settingsModal = document.getElementById('settingsModal');
-    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
-    const apiKeyInput = document.getElementById('apiKeyInput');
-
     const languageSelect = document.getElementById('languageSelect');
     const taskSelect = document.getElementById('taskSelect');
     const recordBtn = document.getElementById('recordBtn');
@@ -394,30 +347,6 @@
       }, 5000);
     }
 
-    // Settings modal handlers
-    settingsBtn.addEventListener('click', () => {
-      apiKeyInput.value = apiKey;
-      settingsModal.classList.remove('hidden');
-    });
-
-    closeSettingsBtn.addEventListener('click', () => {
-      settingsModal.classList.add('hidden');
-    });
-
-    // Auto-save API key on any input (typing, paste, etc.)
-    ['input', 'paste', 'change'].forEach(event => {
-      apiKeyInput.addEventListener(event, () => {
-        setTimeout(() => {
-          apiKey = apiKeyInput.value.trim();
-          try {
-            localStorage.setItem('groqApiKey', apiKey);
-          } catch {
-            showStatus('API key will only be available for this session', 'warning');
-          }
-        }, 0);
-      });
-    });
-
     // Audio level meter
     function startLevelMeter(stream) {
       analyserContext = new AudioContext();
@@ -524,12 +453,8 @@
         return;
       }
 
-      if (!apiKey) {
-        showStatus('Please configure your API key in settings', 'error');
-        settingsModal.classList.remove('hidden');
-        return;
-      }
-
+      const controller = new AbortController();
+      let requestTimer;
       try {
         transcribeProgress.classList.remove('hidden');
         saveTranscript();
@@ -539,30 +464,34 @@
         const wavBlob = await convertToWav(audioBlob);
         const formData = new FormData();
         formData.append('file', wavBlob, 'audio.wav');
-        formData.append('model', 'whisper-large-v3');
+        formData.append('response_format', 'json');
         if (language !== 'auto') {
           formData.append('language', language);
         }
+        if (task === 'translate') {
+          // whisper.cpp accepts translation as an option on the same endpoint.
+          formData.append('translate', 'true');
+        }
 
-        const apiEndpoint = task === 'translate'
-          ? 'https://api.groq.com/openai/v1/audio/translations'
-          : 'https://api.groq.com/openai/v1/audio/transcriptions';
-        const response = await fetch(apiEndpoint, {
+        requestTimer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+        const response = await fetch(TRANSCRIBE_URL, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-          },
           body: formData,
+          signal: controller.signal,
         });
 
         if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error?.message || 'Request failed');
+          throw new Error(`Transcription failed: HTTP ${response.status}`);
         }
 
         const result = await response.json();
-        if (typeof result.text !== 'string' || !result.text.trim()) {
-          throw new Error('No speech recognized. Your previous transcript has been kept.');
+        if (typeof result?.text !== 'string') {
+          throw new Error('Invalid transcription response');
+        }
+        const text = result.text.trim();
+        if (!text) {
+          showStatus('No speech recognized. Your previous transcript has been kept.', 'error');
+          return;
         }
         saveTranscript();
         resetAutoCopy();
@@ -570,8 +499,8 @@
         const existingText = transcript.value;
         const separator = existingText.endsWith('\n') ? '' : '\n';
         transcript.value = append && existingText.trim()
-          ? existingText + separator + result.text
-          : result.text;
+          ? existingText + separator + text
+          : text;
         saveTranscript();
         copyBtn.disabled = false;
         transcribeProgress.classList.add('hidden');
@@ -584,9 +513,13 @@
         }
 
       } catch (error) {
-        showStatus(`Failed: ${error.message}`, 'error');
+        const message = controller.signal.aborted
+          ? 'Transcription timed out after 120 seconds. Please try again.'
+          : 'Transcription server unavailable. Please try again.';
+        showStatus(`${message} Your previous transcript has been kept.`, 'error');
         console.error('Transcription error:', error);
       } finally {
+        clearTimeout(requestTimer);
         transcribeProgress.classList.add('hidden');
       }
     }
@@ -730,13 +663,7 @@
     });
 
     // Initialize on load
-    window.addEventListener('load', async () => {
-      await initMicStream();
-
-      if (!apiKey) {
-        showStatus('Set your Groq API key in Settings to get started', 'warning');
-      }
-    });
+    window.addEventListener('load', initMicStream);
   </script>
 </body>
 </html>
