@@ -293,6 +293,24 @@ test('Auto language detection omits the language field', async () => {
   await finished;
 });
 
+test('Server line breaks become one paragraph and spaces between consecutive Chinese characters are removed', async () => {
+  const cases = [
+    ['  First line.\r\n  Second line.\n\nThird line.  ', 'First line. Second line. Third line.'],
+    ['  你 好 世 界\n今 天 天 气 很 好  ', '你好世界今天天气很好'],
+    ['我 在 用 Whisper\n转 写 English text', '我在用 Whisper 转写 English text'],
+  ];
+  for (const [response, expected] of cases) {
+    const a = app();
+    await a.click('recordBtn');
+    const { finished } = await a.stop();
+    a.respond(response);
+    await finished;
+    assert.equal(a.get('transcript').value, expected);
+    assert.equal(a.copied.at(-1), expected);
+    assert.equal(a.history[0].text, expected);
+  }
+});
+
 test('Translate uses the same endpoint with the whisper.cpp translation option', async () => {
   const a = app();
   a.get('taskSelect').value = 'translate';

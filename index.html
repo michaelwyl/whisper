@@ -488,7 +488,10 @@
         if (typeof result?.text !== 'string') {
           throw new Error('Invalid transcription response');
         }
-        const text = result.text.trim();
+        const text = result.text
+          .replace(/\s*\n\s*/g, ' ')
+          .replace(/([\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])/g, '$1')
+          .trim();
         if (!text) {
           showStatus('No speech recognized. Your previous transcript has been kept.', 'error');
           return;

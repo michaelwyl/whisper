@@ -8,6 +8,8 @@ exposed through Tailscale Funnel. No API key or browser model download is needed
 
 - Record from your microphone with a live audio level meter.
 - Choose a language or use automatic language detection.
+- Join server output lines into one paragraph and remove extra spaces between
+  Chinese characters, preserving spaces around English words.
 - Select Translate to translate speech into English using Whisper.
 - Start a new transcript or continue recording to append another segment on a
   new line, preserving your edits.
