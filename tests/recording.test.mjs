@@ -265,8 +265,9 @@ test('Transcription sends the WAV and selected language to the configured server
   assert.equal(request.method, 'POST');
   assert.equal(request.headers, undefined);
   assert.equal(request.signal.aborted, false);
-  assert.deepEqual([...request.body.keys()], ['file', 'response_format', 'language']);
+  assert.deepEqual([...request.body.keys()], ['file', 'response_format', 'prompt', 'language']);
   assert.equal(request.body.get('response_format'), 'json');
+  assert.equal(request.body.get('prompt'), '这是一段中英文混合的录音，内容关于computer networks，software engineering和data analysis。好的，我们开始吧。');
   assert.equal(request.body.get('language'), 'en');
   const file = request.body.get('file');
   assert.equal(file.name, 'audio.wav');
@@ -288,7 +289,7 @@ test('Auto language detection omits the language field', async () => {
   a.get('languageSelect').value = 'auto';
   await a.click('recordBtn');
   const { finished } = await a.stop();
-  assert.deepEqual([...a.sentRequests[0].body.keys()], ['file', 'response_format']);
+  assert.deepEqual([...a.sentRequests[0].body.keys()], ['file', 'response_format', 'prompt']);
   a.respond('Detected language');
   await finished;
 });

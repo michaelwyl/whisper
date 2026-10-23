@@ -49,6 +49,8 @@ The browser sends `multipart/form-data` containing:
 - `file`: the recording, converted by the existing audio pipeline to a mono,
   16 kHz WAV named `audio.wav`.
 - `response_format`: `json`.
+- `prompt`: a fixed hint for mixed Chinese and English speech about computer
+  networks, software engineering, and data analysis.
 - `language`: the selected language code, omitted when Auto is selected.
 - `translate`: `true` when Translate is selected, using whisper.cpp's translation
   option on the same endpoint.

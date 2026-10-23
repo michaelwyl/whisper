@@ -465,6 +465,7 @@
         const formData = new FormData();
         formData.append('file', wavBlob, 'audio.wav');
         formData.append('response_format', 'json');
+        formData.append('prompt', '这是一段中英文混合的录音，内容关于computer networks，software engineering和data analysis。好的，我们开始吧。');
         if (language !== 'auto') {
           formData.append('language', language);
         }
