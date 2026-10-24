@@ -31,9 +31,11 @@ transcription. Use **Continue Recording** to add to the current text.
 
 The server processes one request at a time. A 30-second clip typically takes
 about 5–8 seconds to process; longer clips take proportionally longer. The app
-shows a transcribing state while waiting and times requests out after 120
-seconds. Failures show a message and keep the previous transcript so you can
-try again.
+shows a transcribing state while waiting. Network failures are retried up to
+twice, with an 800 ms pause between attempts and a fresh 120-second timeout for
+each attempt. HTTP errors, response-reading errors, and timeouts fail immediately
+without retrying. If a request ultimately fails, a message appears and the
+previous transcript is kept so you can try again.
 
 ## Transcription backend
 

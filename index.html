@@ -145,6 +145,8 @@
     // Transcription server configuration
     const TRANSCRIBE_URL = 'https://yilins-mac-mini.tail73950a.ts.net/v1/audio/transcriptions';
     const TRANSCRIBE_TIMEOUT_MS = 120_000;
+    const TRANSCRIBE_MAX_ATTEMPTS = 3;
+    const TRANSCRIBE_RETRY_DELAY_MS = 800;
 
     // State
     const HISTORY_KEY = 'whisperTranscriptHistory';
@@ -453,8 +455,7 @@
         return;
       }
 
-      const controller = new AbortController();
-      let requestTimer;
+      let controller;
       try {
         transcribeProgress.classList.remove('hidden');
         saveTranscript();
@@ -474,18 +475,36 @@
           formData.append('translate', 'true');
         }
 
-        requestTimer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
-        const response = await fetch(TRANSCRIBE_URL, {
-          method: 'POST',
-          body: formData,
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Transcription failed: HTTP ${response.status}`);
+        let result;
+        for (let attempt = 1; attempt <= TRANSCRIBE_MAX_ATTEMPTS; attempt++) {
+          controller = new AbortController();
+          const requestTimer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+          let receivedResponse = false;
+          try {
+            const response = await fetch(TRANSCRIBE_URL, {
+              method: 'POST',
+              body: formData,
+              signal: controller.signal,
+            });
+            receivedResponse = true;
+            if (!response.ok) {
+              throw new Error(`Transcription failed: HTTP ${response.status}`);
+            }
+            result = await response.json();
+            break;
+          } catch (error) {
+            // Retry network failures only before a response has arrived.
+            const canRetry = !receivedResponse && !controller.signal.aborted &&
+              error instanceof TypeError && error.name !== 'AbortError' &&
+              attempt < TRANSCRIBE_MAX_ATTEMPTS;
+            if (!canRetry) throw error;
+            console.warn(`Transcription attempt ${attempt} failed; retrying…`, error);
+          } finally {
+            clearTimeout(requestTimer);
+          }
+          await new Promise(resolve => setTimeout(resolve, TRANSCRIBE_RETRY_DELAY_MS));
         }
 
-        const result = await response.json();
         if (typeof result?.text !== 'string') {
           throw new Error('Invalid transcription response');
         }
@@ -517,13 +536,12 @@
         }
 
       } catch (error) {
-        const message = controller.signal.aborted
+        const message = controller?.signal.aborted
           ? 'Transcription timed out after 120 seconds. Please try again.'
           : 'Transcription server unavailable. Please try again.';
         showStatus(`${message} Your previous transcript has been kept.`, 'error');
         console.error('Transcription error:', error);
       } finally {
-        clearTimeout(requestTimer);
         transcribeProgress.classList.add('hidden');
       }
     }

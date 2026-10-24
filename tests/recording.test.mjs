@@ -31,6 +31,7 @@ function app({ micAllowed = true } = {}) {
   const storage = new Map();
   const recorders = [];
   const copied = [];
+  const warnings = [];
   const sentRequests = [];
   const timers = new Map();
   let nextTimer = 1;
@@ -70,7 +71,7 @@ function app({ micAllowed = true } = {}) {
       } },
       clipboard: { async writeText(text) { copied.push(text); } },
     },
-    MediaRecorder: Recorder, Blob, FormData, AbortController,
+    MediaRecorder: Recorder, Blob, FormData, AbortController, TypeError,
     URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
     setTimeout(callback, delay) {
       const id = nextTimer++;
@@ -78,7 +79,7 @@ function app({ micAllowed = true } = {}) {
       return id;
     },
     clearTimeout(id) { timers.delete(id); },
-    console: { error() {} },
+    console: { error() {}, warn(...args) { warnings.push(args); } },
     fetch(url, options) {
       requests++;
       sentRequests.push({ url, ...options });
@@ -101,9 +102,10 @@ function app({ micAllowed = true } = {}) {
   get('languageSelect').value = 'zh';
   get('taskSelect').value = 'transcribe';
   return {
-    get, click, copied, recorders, sentRequests,
+    get, click, copied, recorders, sentRequests, warnings,
     get requests() { return requests; },
     get requestTimers() { return [...timers.values()].filter(timer => timer.delay === 120_000); },
+    get retryTimers() { return [...timers.values()].filter(timer => timer.delay === 800); },
     get statuses() { return get('statusArea').children.map(child => child.textContent); },
     get history() { return JSON.parse(storage.get('whisperTranscriptHistory') || '[]'); },
     edit(text) {
@@ -122,15 +124,25 @@ function app({ micAllowed = true } = {}) {
     respondWith(payload, { status = 200, jsonError = false } = {}) {
       assert.ok(pendingResponse, 'A transcription request must be pending');
       pendingResponse({ ok: status >= 200 && status < 300, status, json: async () => {
-        if (jsonError) throw new SyntaxError('Invalid JSON');
+        if (jsonError) throw jsonError === true ? new SyntaxError('Invalid JSON') : jsonError;
         return payload;
       } });
       pendingResponse = null;
+      pendingFailure = null;
     },
-    failRequest() {
+    async failRequest(error = new TypeError('Failed to fetch')) {
       assert.ok(pendingFailure, 'A transcription request must be pending');
-      pendingFailure(new TypeError('Failed to fetch'));
+      pendingFailure(error);
       pendingResponse = null;
+      pendingFailure = null;
+      await new Promise(resolve => setImmediate(resolve));
+    },
+    async retryRequest() {
+      const timer = [...timers.entries()].find(([, timer]) => timer.delay === 800);
+      assert.ok(timer, 'An 800 ms retry delay must be scheduled');
+      timers.delete(timer[0]);
+      timer[1].callback();
+      await new Promise(resolve => setImmediate(resolve));
     },
     expireRequest() {
       const timer = [...timers.entries()].find(([, timer]) => timer.delay === 120_000);
@@ -327,13 +339,70 @@ test('Translate uses the same endpoint with the whisper.cpp translation option',
   assert.equal(a.get('transcript').value, 'Translated into English.');
 });
 
-test('A network failure shows a retry message and preserves text and usable controls', async () => {
+test('A transient network failure succeeds on attempt two or three with the full audio and no visible error', async () => {
+  for (const failures of [1, 2]) {
+    const a = app();
+    a.edit('Original transcript');
+    a.get('languageSelect').value = 'en';
+    a.get('taskSelect').value = 'translate';
+    await a.click('continueBtn');
+    const { finished } = await a.stop();
+    const prompt = a.sentRequests[0].body.get('prompt');
+    for (let attempt = 1; attempt <= failures; attempt++) {
+      await a.failRequest();
+      assert.equal(a.requests, attempt);
+      assert.equal(a.requestTimers.length, 0);
+      assert.equal(a.retryTimers.length, 1);
+      assert.equal(a.get('recordBtn').disabled, true);
+      assert.equal(a.get('continueBtn').disabled, true);
+      assert.equal(a.get('clearBtn').disabled, true);
+      assert.equal(a.get('transcribeProgress').classList.contains('hidden'), false);
+      assert.equal(a.statuses.some(message => /unavailable|timed out/.test(message)), false);
+      a.edit('Edited while retrying');
+      await a.retryRequest();
+      assert.equal(a.requestTimers.length, 1);
+      assert.equal(a.retryTimers.length, 0);
+    }
+    assert.equal(a.requests, failures + 1);
+    assert.equal(new Set(a.sentRequests.map(request => request.signal)).size, failures + 1);
+    for (const request of a.sentRequests) {
+      assert.equal(request.url, 'https://yilins-mac-mini.tail73950a.ts.net/v1/audio/transcriptions');
+      assert.equal(request.method, 'POST');
+      assert.equal(request.signal.aborted, false);
+      assert.equal(request.body.get('file').name, 'audio.wav');
+      assert.equal(await request.body.get('file').text(), 'audio');
+      assert.equal(request.body.get('response_format'), 'json');
+      assert.equal(request.body.get('language'), 'en');
+      assert.equal(request.body.get('translate'), 'true');
+      assert.equal(request.body.get('prompt'), prompt);
+    }
+    a.respond('  Recovered\ntranscript.  ');
+    await finished;
+    const expected = 'Edited while retrying\nRecovered transcript.';
+    assert.equal(a.get('transcript').value, expected);
+    assert.equal(a.copied.at(-1), expected);
+    assert.equal(a.history[0].text, expected);
+    assert.equal(a.statuses.some(message => /unavailable|timed out/.test(message)), false);
+    assert.equal(a.warnings.length, failures);
+    assert.equal(a.requestTimers.length, 0);
+    assert.equal(a.retryTimers.length, 0);
+    assert.equal(a.get('recordBtn').disabled, false);
+  }
+});
+
+test('Three network failures show the existing error and leave controls usable without another retry', async () => {
   const a = app();
   a.edit('Keep this text');
   await a.click('continueBtn');
   const { finished } = await a.stop();
-  a.failRequest();
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await a.failRequest();
+    if (attempt < 3) await a.retryRequest();
+  }
   await finished;
+  assert.equal(a.requests, 3);
+  assert.equal(a.warnings.length, 2);
+  assert.equal(a.retryTimers.length, 0);
   assert.equal(a.get('transcript').value, 'Keep this text');
   assert.ok(a.statuses.some(message => message.includes('Transcription server unavailable. Please try again.')));
   assert.equal(a.get('recordBtn').disabled, false);
@@ -353,6 +422,8 @@ test('The 120-second timeout aborts the request, preserves text, and permits a r
   assert.equal(a.sentRequests[0].signal.aborted, false);
   a.expireRequest();
   await finished;
+  assert.equal(a.requests, 1);
+  assert.equal(a.retryTimers.length, 0);
   assert.equal(a.sentRequests[0].signal.aborted, true);
   assert.equal(a.get('transcript').value, 'Keep this text');
   assert.ok(a.statuses.some(message => message.includes('Transcription timed out after 120 seconds. Please try again.')));
@@ -368,11 +439,52 @@ test('The 120-second timeout aborts the request, preserves text, and permits a r
   assert.equal(a.get('transcript').value, 'Keep this text\nRetry succeeded');
 });
 
+test('A later attempt has a fresh 120-second timeout and does not retry when it expires', async () => {
+  const a = app();
+  a.edit('Keep this text');
+  await a.click('continueBtn');
+  const { finished } = await a.stop();
+  const firstTimer = a.requestTimers[0];
+  await a.failRequest();
+  assert.equal(a.requestTimers.length, 0);
+  await a.retryRequest();
+  assert.equal(a.requestTimers.length, 1);
+  assert.notEqual(a.requestTimers[0], firstTimer);
+  assert.notEqual(a.sentRequests[1].signal, a.sentRequests[0].signal);
+  a.expireRequest();
+  await finished;
+  assert.equal(a.requests, 2);
+  assert.equal(a.sentRequests[0].signal.aborted, false);
+  assert.equal(a.sentRequests[1].signal.aborted, true);
+  assert.equal(a.requestTimers.length, 0);
+  assert.equal(a.retryTimers.length, 0);
+  assert.equal(a.get('transcript').value, 'Keep this text');
+  assert.ok(a.statuses.some(message => message.includes('Transcription timed out after 120 seconds.')));
+  assert.equal(a.get('continueBtn').disabled, false);
+});
+
+test('An AbortError thrown by fetch is never retried', async () => {
+  const a = app();
+  a.edit('Keep this text');
+  await a.click('continueBtn');
+  const { finished } = await a.stop();
+  const error = new TypeError('Request aborted');
+  error.name = 'AbortError';
+  await a.failRequest(error);
+  await finished;
+  assert.equal(a.requests, 1);
+  assert.equal(a.retryTimers.length, 0);
+  assert.equal(a.requestTimers.length, 0);
+  assert.equal(a.get('transcript').value, 'Keep this text');
+  assert.equal(a.get('recordBtn').disabled, false);
+});
+
 test('HTTP errors and invalid responses show a retry message and keep the previous transcript', async () => {
   const cases = [
     { payload: null, options: { status: 403, jsonError: true } },
     { payload: null, options: { status: 500, jsonError: true } },
     { payload: null, options: { jsonError: true } },
+    { payload: null, options: { jsonError: new TypeError('Failed to read response body') } },
     { payload: null },
     { payload: {} },
     { payload: { text: 42 } },
@@ -384,6 +496,8 @@ test('HTTP errors and invalid responses show a retry message and keep the previo
     const { finished } = await a.stop();
     a.respondWith(payload, options);
     await finished;
+    assert.equal(a.requests, 1);
+    assert.equal(a.retryTimers.length, 0);
     assert.equal(a.get('transcript').value, 'Previous transcript');
     assert.ok(a.statuses.some(message => message.includes('Transcription server unavailable. Please try again.')));
     assert.equal(a.get('recordBtn').disabled, false);
