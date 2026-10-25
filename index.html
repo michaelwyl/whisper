@@ -56,7 +56,7 @@
           <div class="flex-1">
             <label class="block text-xs font-semibold text-gray-500 mb-1">Language</label>
             <select id="languageSelect" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-              <option value="zh">中文</option>
+              <option value="zh">中文 / English</option>
               <option value="en">English</option>
               <option value="ja">日本語</option>
               <option value="ko">한국어</option>
@@ -147,6 +147,21 @@
     const TRANSCRIBE_TIMEOUT_MS = 120_000;
     const TRANSCRIBE_MAX_ATTEMPTS = 3;
     const TRANSCRIBE_RETRY_DELAY_MS = 800;
+    // Short and bilingual: it makes Whisper punctuate without pushing English speech into Chinese.
+    const TRANSCRIBE_PROMPT = "好的，我们开始吧。OK, let's talk about computer networks, software engineering, and data analysis.";
+
+    // Audio is sent in chunks while recording, so after Stop only the last chunk is left to transcribe.
+    // Chunks stay under Whisper's 30-second window and are cut at pauses where possible.
+    const CHUNK_MIN_SECONDS = 18;           // from here, cut at the next short pause
+    const CHUNK_MAX_SECONDS = 28;           // here, cut at the best pause so far
+    const LONG_PAUSE_MIN_CHUNK_SECONDS = 8; // from here, cut at a long pause
+    const SHORT_PAUSE_SECONDS = 0.5;
+    const LONG_PAUSE_SECONDS = 1.2;
+    const FRAME_SECONDS = 0.05;
+    const SILENCE_FLOOR = 0.004;            // RMS level that always counts as quiet
+    const SILENCE_RATIO = 0.1;              // quiet when below this share of the recent peak level
+    const PEAK_DECAY = 0.995;               // per frame, so the peak halves in about 7 seconds
+    const FAILED_CHUNK_MARKER = '[…]';
 
     // State
     const HISTORY_KEY = 'whisperTranscriptHistory';
@@ -154,14 +169,12 @@
     let transcriptHistory = [];
 
     let micStream = null;
-    let mediaRecorder = null;
-    let currentAudioBlob = null;
+    let audioContext = null;
+    let activeRecording = null;
     let currentAudioUrl = null;
     let isRecording = false;
     let isStartingRecording = false;
     let isProcessing = false;
-    let audioAnalyser = null;
-    let analyserContext = null;
     let levelAnimationId = null;
 
     // DOM Elements
@@ -349,22 +362,76 @@
       }, 5000);
     }
 
-    // Audio level meter
-    function startLevelMeter(stream) {
-      analyserContext = new AudioContext();
-      const source = analyserContext.createMediaStreamSource(stream);
-      audioAnalyser = analyserContext.createAnalyser();
-      audioAnalyser.fftSize = 256;
-      source.connect(audioAnalyser);
+    // Audio capture and level meter
+    const CAPTURE_WORKLET = `
+      class CaptureProcessor extends AudioWorkletProcessor {
+        process(inputs) {
+          if (inputs[0][0]) this.port.postMessage(inputs[0][0].slice());
+          return true;
+        }
+      }
+      registerProcessor('capture-processor', CaptureProcessor);
+    `;
+    let captureModule = null;
 
+    // Call synchronously from a click so Safari allows the audio context to start.
+    function resumeAudioContext() {
+      audioContext ??= new AudioContext();
+      return audioContext.resume();
+    }
+
+    // Streams mono samples from the mic to onAudio and drives the level meter.
+    async function startCapture(stream, onAudio) {
+      const context = audioContext;
+      const source = context.createMediaStreamSource(stream);
+      // Processing nodes only run when connected to the output, so route them through silence.
+      const mute = context.createGain();
+      mute.gain.value = 0;
+      mute.connect(context.destination);
+
+      let processor;
+      if (context.audioWorklet) {
+        captureModule ??= context.audioWorklet
+          .addModule(URL.createObjectURL(new Blob([CAPTURE_WORKLET], { type: 'text/javascript' })))
+          .catch(error => { captureModule = null; throw error; });
+        await captureModule;
+        processor = new AudioWorkletNode(context, 'capture-processor', { channelCount: 1, channelCountMode: 'explicit' });
+        processor.port.onmessage = event => onAudio(event.data);
+      } else {
+        processor = context.createScriptProcessor(4096, 1, 1);
+        processor.onaudioprocess = event => onAudio(event.inputBuffer.getChannelData(0).slice());
+      }
+      source.connect(processor);
+      processor.connect(mute);
+
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      startLevelMeter(analyser);
+
+      return {
+        sampleRate: context.sampleRate,
+        stop() {
+          stopLevelMeter();
+          if (processor.port) processor.port.onmessage = null;
+          else processor.onaudioprocess = null;
+          source.disconnect();
+          processor.disconnect();
+          mute.disconnect();
+          context.suspend();
+        },
+      };
+    }
+
+    function startLevelMeter(analyser) {
       levelMeterSection.classList.remove('hidden');
       levelMeter.width = levelMeter.offsetWidth;
 
-      const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
       function draw() {
         levelAnimationId = requestAnimationFrame(draw);
-        audioAnalyser.getByteFrequencyData(dataArray);
+        analyser.getByteFrequencyData(dataArray);
 
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
         const level = avg / 255;
@@ -393,32 +460,111 @@
         cancelAnimationFrame(levelAnimationId);
         levelAnimationId = null;
       }
-      if (analyserContext) {
-        analyserContext.close();
-        analyserContext = null;
-      }
-      audioAnalyser = null;
       levelMeterSection.classList.add('hidden');
     }
 
-    // Convert audio blob to WAV for reliable API transcription
-    async function convertToWav(blob) {
-      const audioContext = new AudioContext();
-      const arrayBuffer = await blob.arrayBuffer();
-      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    // Collects samples and hands them to onChunk in pieces cut at pauses (see the CHUNK_* settings).
+    function createChunker(sampleRate, onChunk) {
+      const frameSize = Math.round(sampleRate * FRAME_SECONDS);
+      const frameCount = seconds => Math.round(seconds / FRAME_SECONDS);
+      const buffer = new Float32Array(Math.ceil(sampleRate * (CHUNK_MAX_SECONDS + 1)));
+      let length = 0;
+      let frames = []; // RMS level of each complete frame in the buffer
+      let frameEnergy = 0;
+      let frameFill = 0;
+      let peak = 0;
 
-      const numChannels = 1;
-      const sampleRate = 16000;
-      const offlineCtx = new OfflineAudioContext(numChannels, audioBuffer.duration * sampleRate, sampleRate);
+      const isQuiet = level => level < Math.max(SILENCE_FLOOR, peak * SILENCE_RATIO);
+
+      function cut(frame) {
+        const end = frame * frameSize;
+        onChunk(buffer.slice(0, end));
+        buffer.copyWithin(0, end, length);
+        length -= end;
+        frames = frames.slice(frame);
+      }
+
+      // The middle of the longest pause (any pause over 0.6 s counts as long; later wins ties),
+      // or else the quietest frame of the last 8 seconds. Never leaves a chunk under 1 second.
+      function bestCut() {
+        const first = frameCount(1);
+        let best = -1;
+        let bestScore = -1;
+        let run = 0;
+        for (let i = 0; i < frames.length; i++) {
+          run = isQuiet(frames[i]) ? run + 1 : 0;
+          const middle = i + 1 - Math.ceil(run / 2);
+          const score = Math.min(run, frameCount(0.6)) * frames.length + i;
+          if (run && middle >= first && score > bestScore) {
+            best = middle;
+            bestScore = score;
+          }
+        }
+        if (best >= 0) return best;
+        best = Math.max(first, frames.length - frameCount(8));
+        for (let i = best; i < frames.length; i++) {
+          if (frames[i] < frames[best]) best = i;
+        }
+        return best;
+      }
+
+      function checkForCut() {
+        const n = frames.length;
+        let pause = 0;
+        while (pause < n && isQuiet(frames[n - 1 - pause])) pause++;
+        const hasSpeech = pause < n;
+        if (hasSpeech && ((n >= frameCount(CHUNK_MIN_SECONDS) && pause >= frameCount(SHORT_PAUSE_SECONDS)) ||
+            (n >= frameCount(LONG_PAUSE_MIN_CHUNK_SECONDS) && pause >= frameCount(LONG_PAUSE_SECONDS)))) {
+          cut(n - Math.floor(pause / 2));
+        } else if (n >= frameCount(CHUNK_MAX_SECONDS)) {
+          cut(bestCut());
+        }
+      }
+
+      return {
+        push(samples) {
+          for (const sample of samples) {
+            buffer[length++] = sample;
+            frameEnergy += sample * sample;
+            if (++frameFill === frameSize) {
+              const level = Math.sqrt(frameEnergy / frameSize);
+              peak = Math.max(level, peak * PEAK_DECAY);
+              frames.push(level);
+              frameEnergy = 0;
+              frameFill = 0;
+              checkForCut();
+            }
+          }
+        },
+        // Hands over whatever is left, skipping a tail too short to hold speech.
+        flush() {
+          if (length >= sampleRate * 0.1) onChunk(buffer.slice(0, length));
+          length = 0;
+          frames = [];
+          frameEnergy = 0;
+          frameFill = 0;
+        },
+      };
+    }
+
+    async function resampleTo16k(samples, sampleRate) {
+      const offlineCtx = new OfflineAudioContext(1, Math.ceil(samples.length * 16000 / sampleRate), 16000);
+      const buffer = offlineCtx.createBuffer(1, samples.length, sampleRate);
+      buffer.copyToChannel(samples, 0);
 
       const source = offlineCtx.createBufferSource();
-      source.buffer = audioBuffer;
+      source.buffer = buffer;
       source.connect(offlineCtx.destination);
       source.start();
 
       const rendered = await offlineCtx.startRendering();
-      const pcmData = rendered.getChannelData(0);
+      return rendered.getChannelData(0);
+    }
 
+    // Encode 16 kHz mono samples as a 16-bit WAV
+    function encodeWav(pcmData) {
+      const numChannels = 1;
+      const sampleRate = 16000;
       const wavBuffer = new ArrayBuffer(44 + pcmData.length * 2);
       const view = new DataView(wavBuffer);
 
@@ -444,78 +590,144 @@
         view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
       }
 
-      await audioContext.close();
       return new Blob([wavBuffer], { type: 'audio/wav' });
     }
 
-    // Transcription function
-    async function transcribeAudio(audioBlob, { append, task, language }) {
-      if (!audioBlob) {
-        showStatus('No audio to transcribe', 'error');
-        return;
+    function normalizeTranscript(text) {
+      return text
+        .replace(/\s*\n\s*/g, ' ')
+        .replace(/([一-鿿])\s+(?=[一-鿿])/g, '$1')
+        // In Chinese mode Whisper can drop the space after English punctuation ("timeline.We").
+        .replace(/([a-z][.!?])(?=[A-Z])/g, '$1 ')
+        .replace(/([A-Za-z][,;:])(?=[A-Za-z])/g, '$1 ')
+        .trim();
+    }
+
+    // Chinese chunks join directly; English words and the failure marker need a space.
+    function joinChunks(pieces) {
+      return pieces.reduce((text, piece, i) => {
+        if (!i) return piece;
+        const spaced = piece === FAILED_CHUNK_MARKER || pieces[i - 1] === FAILED_CHUNK_MARKER ||
+          (/[\x21-\x7e]$/.test(text) && /^[A-Za-z0-9]/.test(piece));
+        return text + (spaced ? ' ' : '') + piece;
+      }, '');
+    }
+
+    // Sends one chunk, retrying network failures only before a response has arrived.
+    async function requestTranscription(wavBlob, recording) {
+      const { task, language } = recording.options;
+      const formData = new FormData();
+      formData.append('file', wavBlob, 'audio.wav');
+      formData.append('response_format', 'json');
+      formData.append('prompt', TRANSCRIBE_PROMPT);
+      formData.append('no_timestamps', 'true');
+      formData.append('language', language);
+      if (task === 'translate') {
+        // whisper.cpp accepts translation as an option on the same endpoint.
+        formData.append('translate', 'true');
       }
 
-      let controller;
+      for (let attempt = 1; ; attempt++) {
+        if (recording.cancelled) throw new Error('Recording discarded');
+        const controller = new AbortController();
+        recording.controller = controller;
+        const requestTimer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
+        let receivedResponse = false;
+        try {
+          const response = await fetch(TRANSCRIBE_URL, {
+            method: 'POST',
+            body: formData,
+            signal: controller.signal,
+          });
+          receivedResponse = true;
+          if (!response.ok) {
+            throw new Error(`Transcription failed: HTTP ${response.status}`);
+          }
+          const result = await response.json();
+          if (typeof result?.text !== 'string') {
+            throw new Error('Invalid transcription response');
+          }
+          return result.text;
+        } catch (error) {
+          const canRetry = !receivedResponse && !controller.signal.aborted &&
+            error instanceof TypeError && error.name !== 'AbortError' &&
+            attempt < TRANSCRIBE_MAX_ATTEMPTS;
+          if (!canRetry) throw error;
+          console.warn(`Transcription attempt ${attempt} failed; retrying…`, error);
+        } finally {
+          clearTimeout(requestTimer);
+        }
+        await new Promise(resolve => setTimeout(resolve, TRANSCRIBE_RETRY_DELAY_MS));
+      }
+    }
+
+    // Chunks are transcribed one at a time, in order, while recording continues.
+    function queueChunk(recording, samples) {
+      const index = recording.results.length;
+      recording.results.push('');
+      const audio = resampleTo16k(samples, recording.capture.sampleRate);
+      audio.catch(() => {}); // reported when the chunk is sent
+      recording.audio.push(audio);
+      recording.queue = recording.queue.then(async () => {
+        if (recording.cancelled) return;
+        try {
+          recording.results[index] = await requestTranscription(encodeWav(await audio), recording);
+        } catch (error) {
+          if (recording.cancelled) return;
+          recording.results[index] = null;
+          recording.timedOut ||= recording.controller?.signal.aborted ?? false;
+          console.error('Transcription error:', error);
+        }
+      });
+    }
+
+    async function showRecordingPreview(recording) {
+      try {
+        const chunks = await Promise.all(recording.audio);
+        const samples = new Float32Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+        let offset = 0;
+        for (const chunk of chunks) {
+          samples.set(chunk, offset);
+          offset += chunk.length;
+        }
+        if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+        currentAudioUrl = URL.createObjectURL(encodeWav(samples));
+        audioPlayer.src = currentAudioUrl;
+        mediaPreview.classList.remove('hidden');
+      } catch (error) {
+        console.error('Preview error:', error);
+      }
+    }
+
+    // Waits for the remaining chunks, then applies the combined text to the transcript.
+    async function finishRecording(recording) {
+      const { append, task } = recording.options;
       try {
         transcribeProgress.classList.remove('hidden');
         saveTranscript();
 
         showStatus(task === 'translate' ? 'Translating...' : 'Transcribing...', 'info');
 
-        const wavBlob = await convertToWav(audioBlob);
-        const formData = new FormData();
-        formData.append('file', wavBlob, 'audio.wav');
-        formData.append('response_format', 'json');
-        formData.append('prompt', '这是一段中英文混合的录音，内容关于computer networks，software engineering和data analysis。好的，我们开始吧。');
-        if (language !== 'auto') {
-          formData.append('language', language);
-        }
-        if (task === 'translate') {
-          // whisper.cpp accepts translation as an option on the same endpoint.
-          formData.append('translate', 'true');
-        }
+        await showRecordingPreview(recording);
+        await recording.queue;
+        if (recording.cancelled) return;
 
-        let result;
-        for (let attempt = 1; attempt <= TRANSCRIBE_MAX_ATTEMPTS; attempt++) {
-          controller = new AbortController();
-          const requestTimer = setTimeout(() => controller.abort(), TRANSCRIBE_TIMEOUT_MS);
-          let receivedResponse = false;
-          try {
-            const response = await fetch(TRANSCRIBE_URL, {
-              method: 'POST',
-              body: formData,
-              signal: controller.signal,
-            });
-            receivedResponse = true;
-            if (!response.ok) {
-              throw new Error(`Transcription failed: HTTP ${response.status}`);
-            }
-            result = await response.json();
-            break;
-          } catch (error) {
-            // Retry network failures only before a response has arrived.
-            const canRetry = !receivedResponse && !controller.signal.aborted &&
-              error instanceof TypeError && error.name !== 'AbortError' &&
-              attempt < TRANSCRIBE_MAX_ATTEMPTS;
-            if (!canRetry) throw error;
-            console.warn(`Transcription attempt ${attempt} failed; retrying…`, error);
-          } finally {
-            clearTimeout(requestTimer);
+        const failed = recording.results.includes(null);
+        const pieces = recording.results
+          .map(text => text === null ? FAILED_CHUNK_MARKER : normalizeTranscript(text))
+          .filter(Boolean);
+        if (!pieces.some(piece => piece !== FAILED_CHUNK_MARKER)) {
+          if (failed) {
+            const message = recording.timedOut
+              ? 'Transcription timed out after 120 seconds. Please try again.'
+              : 'Transcription server unavailable. Please try again.';
+            showStatus(`${message} Your previous transcript has been kept.`, 'error');
+          } else {
+            showStatus('No speech recognized. Your previous transcript has been kept.', 'error');
           }
-          await new Promise(resolve => setTimeout(resolve, TRANSCRIBE_RETRY_DELAY_MS));
-        }
-
-        if (typeof result?.text !== 'string') {
-          throw new Error('Invalid transcription response');
-        }
-        const text = result.text
-          .replace(/\s*\n\s*/g, ' ')
-          .replace(/([\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])/g, '$1')
-          .trim();
-        if (!text) {
-          showStatus('No speech recognized. Your previous transcript has been kept.', 'error');
           return;
         }
+        const text = joinChunks(pieces);
         saveTranscript();
         resetAutoCopy();
         // Use the current value so edits made while recording/processing are retained.
@@ -527,6 +739,9 @@
         saveTranscript();
         copyBtn.disabled = false;
         transcribeProgress.classList.add('hidden');
+        if (failed) {
+          showStatus(`Part of the recording could not be transcribed and is marked ${FAILED_CHUNK_MARKER}.`, 'error');
+        }
 
         try {
           await navigator.clipboard.writeText(transcript.value);
@@ -534,13 +749,6 @@
         } catch {
           showStatus('Done', 'success');
         }
-
-      } catch (error) {
-        const message = controller?.signal.aborted
-          ? 'Transcription timed out after 120 seconds. Please try again.'
-          : 'Transcription server unavailable. Please try again.';
-        showStatus(`${message} Your previous transcript has been kept.`, 'error');
-        console.error('Transcription error:', error);
       } finally {
         transcribeProgress.classList.add('hidden');
       }
@@ -563,7 +771,7 @@
       }
     }
 
-    // Each segment has its own recorder, chunks, and transcription mode.
+    // Each recording has its own capture, chunk queue, and transcription mode.
     async function startRecording(append = false) {
       if (isRecording || isStartingRecording || isProcessing) return;
       if (append && !transcript.value.trim()) return;
@@ -571,50 +779,30 @@
       isStartingRecording = true;
       updateRecordingControls();
       try {
+        const contextReady = resumeAudioContext();
         if (!micStream || !micStream.active) {
           await initMicStream();
         }
         if (!micStream?.active) return;
+        await contextReady;
 
-        const recorder = new MediaRecorder(micStream);
-        const chunks = [];
-        const options = { append, task: taskSelect.value, language: languageSelect.value };
-        mediaRecorder = recorder;
-
-        recorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            chunks.push(event.data);
-          }
+        const recording = {
+          options: { append, task: taskSelect.value, language: languageSelect.value },
+          results: [], // text per chunk, or null if that chunk failed
+          audio: [],   // 16 kHz samples per chunk, for the preview
+          queue: Promise.resolve(),
+          controller: null,
+          capture: null,
+          chunker: null,
+          stopped: false,
+          cancelled: false,
+          timedOut: false,
         };
-
-        recorder.onstop = async () => {
-          isRecording = false;
-          isProcessing = true;
-          stopLevelMeter();
-          updateRecordingControls();
-          try {
-            currentAudioBlob = new Blob(chunks, { type: recorder.mimeType });
-            if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
-            currentAudioUrl = URL.createObjectURL(currentAudioBlob);
-            audioPlayer.src = currentAudioUrl;
-            mediaPreview.classList.remove('hidden');
-            await transcribeAudio(currentAudioBlob, options);
-          } catch (error) {
-            showStatus(`Recording failed: ${error.message}`, 'error');
-          } finally {
-            isProcessing = false;
-            mediaRecorder = null;
-            updateRecordingControls();
-          }
-        };
-
-        recorder.onerror = () => {
-          discardRecording();
-          showStatus('Recording failed. Your previous transcript has been kept.', 'error');
-        };
-
-        startLevelMeter(micStream);
-        recorder.start(250);
+        activeRecording = recording;
+        recording.capture = await startCapture(micStream, samples => {
+          if (!recording.stopped) recording.chunker?.push(samples);
+        });
+        recording.chunker = createChunker(recording.capture.sampleRate, samples => queueChunk(recording, samples));
         isRecording = true;
         showStatus(append ? 'Recording — adding to the current transcript...' : 'Recording...', 'info');
       } catch (error) {
@@ -627,13 +815,35 @@
       }
     }
 
+    async function stopRecording() {
+      const recording = activeRecording;
+      // Lock controls while the last chunk is transcribed.
+      isProcessing = true;
+      isRecording = false;
+      recording.stopped = true;
+      recording.capture.stop();
+      recording.chunker.flush();
+      updateRecordingControls();
+      showStatus('Recording stopped', 'success');
+      try {
+        await finishRecording(recording);
+      } catch (error) {
+        showStatus(`Recording failed: ${error.message}`, 'error');
+      } finally {
+        if (activeRecording === recording) activeRecording = null;
+        isProcessing = false;
+        updateRecordingControls();
+      }
+    }
+
     function discardRecording() {
-      if (mediaRecorder) {
-        mediaRecorder.onstop = null;
-        mediaRecorder.ondataavailable = null;
-        mediaRecorder.onerror = null;
-        if (mediaRecorder.state !== 'inactive') mediaRecorder.stop();
-        mediaRecorder = null;
+      const recording = activeRecording;
+      activeRecording = null;
+      if (recording) {
+        recording.stopped = true;
+        recording.cancelled = true;
+        recording.capture?.stop();
+        recording.controller?.abort();
       }
       isRecording = false;
       isProcessing = false;
@@ -644,13 +854,7 @@
     recordBtn.addEventListener('click', () => {
       if (isStartingRecording || isProcessing) return;
       if (!isRecording) return startRecording(false);
-      // Lock controls before the asynchronous stop event delivers the final audio.
-      isProcessing = true;
-      isRecording = false;
-      updateRecordingControls();
-      mediaRecorder.stop();
-      stopLevelMeter();
-      showStatus('Recording stopped', 'success');
+      return stopRecording();
     });
 
     continueBtn.addEventListener('click', () => startRecording(true));
@@ -672,7 +876,6 @@
       saveTranscript();
       resetAutoCopy();
       discardRecording();
-      currentAudioBlob = null;
       if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
       currentAudioUrl = null;
       transcript.value = '';

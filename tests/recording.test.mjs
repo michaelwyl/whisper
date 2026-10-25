@@ -5,6 +5,15 @@ import vm from 'node:vm';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const PROMPT = "好的，我们开始吧。OK, let's talk about computer networks, software engineering, and data analysis.";
+// The capture stub runs at 1 kHz and resampling is skipped, so one second is 1000 samples
+// and a chunk of n samples is sent as a WAV of 44 + 2n bytes.
+const RATE = 1000;
+const wavSize = samples => 44 + 2 * samples;
+
+async function settle() {
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+}
 
 function element() {
   const classes = new Set();
@@ -29,7 +38,7 @@ function element() {
 function app({ micAllowed = true } = {}) {
   const elements = new Map();
   const storage = new Map();
-  const recorders = [];
+  const captures = [];
   const copied = [];
   const warnings = [];
   const sentRequests = [];
@@ -38,20 +47,8 @@ function app({ micAllowed = true } = {}) {
   let pendingResponse;
   let pendingFailure;
   let requests = 0;
-  class Recorder {
-    constructor() {
-      this.state = 'inactive';
-      this.mimeType = 'audio/webm';
-      recorders.push(this);
-    }
-    start() { this.state = 'recording'; }
-    stop() { this.state = 'inactive'; }
-    async finishStop() {
-      this.ondataavailable?.({ data: new Blob(['audio']) });
-      await this.onstop?.();
-    }
-  }
   const context = vm.createContext({
+    __captures: captures,
     document: {
       getElementById(id) {
         if (!elements.has(id)) elements.set(id, element());
@@ -71,7 +68,7 @@ function app({ micAllowed = true } = {}) {
       } },
       clipboard: { async writeText(text) { copied.push(text); } },
     },
-    MediaRecorder: Recorder, Blob, FormData, AbortController, TypeError,
+    Blob, FormData, AbortController, TypeError,
     URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
     setTimeout(callback, delay) {
       const id = nextTimer++;
@@ -91,18 +88,23 @@ function app({ micAllowed = true } = {}) {
     },
   });
   vm.runInContext(script, context);
-  // These tests exercise recording/transcription transitions, not audio decoding.
+  // These tests exercise chunking and transcription, not the Web Audio graph.
   vm.runInContext(`
-    startLevelMeter = () => {};
-    stopLevelMeter = () => {};
-    convertToWav = async blob => new Blob([blob], { type: 'audio/wav' });
+    resumeAudioContext = async () => {};
+    startCapture = async (stream, onAudio) => {
+      const capture = { sampleRate: ${RATE}, onAudio, stopped: false, stop() { this.stopped = true; } };
+      __captures.push(capture);
+      return capture;
+    };
+    resampleTo16k = async samples => samples;
   `, context);
   const get = id => elements.get(id);
   const click = id => get(id).handlers.click();
   get('languageSelect').value = 'zh';
   get('taskSelect').value = 'transcribe';
   return {
-    get, click, copied, recorders, sentRequests, warnings,
+    get, click, copied, captures, sentRequests, warnings,
+    get capture() { return captures.at(-1); },
     get requests() { return requests; },
     get requestTimers() { return [...timers.values()].filter(timer => timer.delay === 120_000); },
     get retryTimers() { return [...timers.values()].filter(timer => timer.delay === 800); },
@@ -112,10 +114,17 @@ function app({ micAllowed = true } = {}) {
       get('transcript').value = text;
       get('transcript').handlers.input({});
     },
-    async stop() {
-      click('recordBtn');
-      const finished = recorders.at(-1).finishStop();
-      await Promise.resolve();
+    speak(seconds, level = 0.3) {
+      captures.at(-1).onAudio(new Float32Array(Math.round(seconds * RATE)).fill(level));
+    },
+    pause(seconds) {
+      this.speak(seconds, 0);
+    },
+    // Records `speech` more seconds, clicks Stop, and lets the last chunk be sent.
+    async stop({ speech = 1 } = {}) {
+      if (speech) this.speak(speech);
+      const finished = click('recordBtn');
+      await settle();
       return { finished };
     },
     respond(text, ok = true) {
@@ -135,14 +144,14 @@ function app({ micAllowed = true } = {}) {
       pendingFailure(error);
       pendingResponse = null;
       pendingFailure = null;
-      await new Promise(resolve => setImmediate(resolve));
+      await settle();
     },
     async retryRequest() {
       const timer = [...timers.entries()].find(([, timer]) => timer.delay === 800);
       assert.ok(timer, 'An 800 ms retry delay must be scheduled');
       timers.delete(timer[0]);
       timer[1].callback();
-      await new Promise(resolve => setImmediate(resolve));
+      await settle();
     },
     expireRequest() {
       const timer = [...timers.entries()].find(([, timer]) => timer.delay === 120_000);
@@ -161,6 +170,7 @@ test('Start replaces old text only on success and archives the old text', async 
   assert.equal(a.get('recordBtn').textContent, 'Stop Recording');
   assert.equal(a.get('continueBtn').classList.contains('hidden'), true);
   const { finished } = await a.stop();
+  assert.equal(a.capture.stopped, true);
   assert.equal(a.get('transcript').value, 'Previous transcript');
   a.respond('First segment');
   await finished;
@@ -197,18 +207,16 @@ test('Pending transcription blocks new recordings, clear and history restore', a
   const starting = a.click('continueBtn');
   await a.click('recordBtn');
   await starting;
-  assert.equal(a.recorders.length, 1);
-  a.click('recordBtn');
+  assert.equal(a.captures.length, 1);
+  const { finished } = await a.stop();
   assert.equal(a.get('recordBtn').disabled, true);
   assert.equal(a.get('continueBtn').disabled, true);
   await a.click('continueBtn');
   await a.click('recordBtn');
   a.click('clearBtn');
-  assert.equal(a.recorders.length, 1);
+  assert.equal(a.captures.length, 1);
   assert.equal(a.get('transcript').value, 'Keep this');
   assert.equal(a.get('historyList').children[0].children[0].disabled, true);
-  const finished = a.recorders[0].finishStop();
-  await Promise.resolve();
   a.respond('Added');
   await finished;
   assert.equal(a.get('clearBtn').disabled, false);
@@ -228,7 +236,7 @@ test('API errors and empty recognition preserve text and allow the next recordin
     assert.equal(a.get('recordBtn').disabled, false);
     assert.equal(a.copied.length, 0);
     await a.click('continueBtn');
-    assert.equal(a.recorders.length, 2);
+    assert.equal(a.captures.length, 2);
   }
 });
 
@@ -236,13 +244,35 @@ test('Clear during recording discards the segment without sending it for transcr
   const a = app();
   a.edit('Archived');
   await a.click('continueBtn');
+  a.speak(1);
   a.click('clearBtn');
-  await a.recorders[0].finishStop();
+  await settle();
+  assert.equal(a.capture.stopped, true);
   assert.equal(a.requests, 0);
   assert.equal(a.get('transcript').value, '');
   assert.equal(a.history[0].text, 'Archived');
   assert.equal(a.get('continueBtn').classList.contains('hidden'), true);
   assert.equal(a.get('recordBtn').textContent, 'Start Recording');
+});
+
+test('Clear during recording aborts a chunk already being transcribed and ignores later audio', async () => {
+  const a = app();
+  await a.click('recordBtn');
+  a.speak(19);
+  a.pause(0.6);
+  await settle();
+  assert.equal(a.requests, 1);
+  a.click('clearBtn');
+  await settle();
+  assert.equal(a.sentRequests[0].signal.aborted, true);
+  a.speak(19);
+  a.pause(0.6);
+  await settle();
+  assert.equal(a.requests, 1);
+  assert.equal(a.retryTimers.length, 0);
+  assert.equal(a.get('transcript').value, '');
+  assert.equal(a.get('recordBtn').textContent, 'Start Recording');
+  assert.equal(a.get('recordBtn').disabled, false);
 });
 
 test('Denied microphone leaves controls usable', async () => {
@@ -251,7 +281,7 @@ test('Denied microphone leaves controls usable', async () => {
   await noMic.click('continueBtn');
   assert.equal(noMic.get('recordBtn').disabled, false);
   assert.equal(noMic.get('continueBtn').disabled, false);
-  assert.equal(noMic.recorders.length, 0);
+  assert.equal(noMic.captures.length, 0);
 });
 
 test('Restored history can be continued and an existing newline is preserved', async () => {
@@ -267,24 +297,25 @@ test('Restored history can be continued and an existing newline is preserved', a
   assert.equal(a.get('transcript').value, 'Restored text\nNew paragraph');
 });
 
-test('Transcription sends the WAV and selected language to the configured server without credentials', async () => {
+test('Transcription sends the WAV, prompt and options to the configured server without credentials', async () => {
   const a = app();
   a.get('languageSelect').value = 'en';
   await a.click('recordBtn');
-  const { finished } = await a.stop();
+  const { finished } = await a.stop({ speech: 1.5 });
   const request = a.sentRequests[0];
   assert.equal(request.url, 'https://api.tinkwhisper.com/v1/audio/transcriptions');
   assert.equal(request.method, 'POST');
   assert.equal(request.headers, undefined);
   assert.equal(request.signal.aborted, false);
-  assert.deepEqual([...request.body.keys()], ['file', 'response_format', 'prompt', 'language']);
+  assert.deepEqual([...request.body.keys()], ['file', 'response_format', 'prompt', 'no_timestamps', 'language']);
   assert.equal(request.body.get('response_format'), 'json');
-  assert.equal(request.body.get('prompt'), '这是一段中英文混合的录音，内容关于computer networks，software engineering和data analysis。好的，我们开始吧。');
+  assert.equal(request.body.get('prompt'), PROMPT);
+  assert.equal(request.body.get('no_timestamps'), 'true');
   assert.equal(request.body.get('language'), 'en');
   const file = request.body.get('file');
   assert.equal(file.name, 'audio.wav');
   assert.equal(file.type, 'audio/wav');
-  assert.equal(await file.text(), 'audio');
+  assert.equal(file.size, wavSize(1500));
   assert.equal(a.requestTimers.length, 1);
   assert.equal(a.get('transcribeProgress').classList.contains('hidden'), false);
   assert.ok(a.statuses.includes('Transcribing...'));
@@ -294,14 +325,15 @@ test('Transcription sends the WAV and selected language to the configured server
   assert.equal(a.copied.at(-1), 'Recognized speech.');
   assert.equal(a.requestTimers.length, 0);
   assert.equal(a.get('transcribeProgress').classList.contains('hidden'), true);
+  assert.equal(a.get('mediaPreview').classList.contains('hidden'), false);
 });
 
-test('Auto language detection omits the language field', async () => {
+test('Auto sends language=auto so the server detects the language', async () => {
   const a = app();
   a.get('languageSelect').value = 'auto';
   await a.click('recordBtn');
   const { finished } = await a.stop();
-  assert.deepEqual([...a.sentRequests[0].body.keys()], ['file', 'response_format', 'prompt']);
+  assert.equal(a.sentRequests[0].body.get('language'), 'auto');
   a.respond('Detected language');
   await finished;
 });
@@ -311,6 +343,8 @@ test('Server line breaks become one paragraph and spaces between consecutive Chi
     ['  First line.\r\n  Second line.\n\nThird line.  ', 'First line. Second line. Third line.'],
     ['  你 好 世 界\n今 天 天 气 很 好  ', '你好世界今天天气很好'],
     ['我 在 用 Whisper\n转 写 English text', '我在用 Whisper 转写 English text'],
+    ['See the timeline.We need it by Friday,then test Node.js and the U.S.A data.',
+      'See the timeline. We need it by Friday, then test Node.js and the U.S.A data.'],
   ];
   for (const [response, expected] of cases) {
     const a = app();
@@ -339,6 +373,108 @@ test('Translate uses the same endpoint with the whisper.cpp translation option',
   assert.equal(a.get('transcript').value, 'Translated into English.');
 });
 
+test('Long recordings are sent in chunks while recording, cut in the middle of a pause', async () => {
+  const a = app();
+  a.edit('Old text');
+  await a.click('recordBtn');
+  a.speak(19);
+  await settle();
+  assert.equal(a.requests, 0);
+  a.pause(0.6);
+  await settle();
+  // Cut once the pause reaches 0.5 s, at its middle: 19 s of speech plus 0.25 s.
+  assert.equal(a.requests, 1);
+  assert.equal(a.sentRequests[0].body.get('file').size, wavSize(19_250));
+  assert.equal(a.get('recordBtn').textContent, 'Stop Recording');
+  a.respond('第一部分。');
+  await settle();
+  assert.equal(a.get('transcript').value, 'Old text');
+  const { finished } = await a.stop({ speech: 5 });
+  assert.equal(a.requests, 2);
+  // The rest of the pause (0.35 s) and the last 5 s.
+  assert.equal(a.sentRequests[1].body.get('file').size, wavSize(5_350));
+  a.speak(30);
+  a.respond('Second part.');
+  await finished;
+  assert.equal(a.requests, 2);
+  assert.equal(a.get('transcript').value, '第一部分。Second part.');
+  assert.deepEqual(a.history.map(entry => entry.text), ['第一部分。Second part.', 'Old text']);
+});
+
+test('A chunk is forced at 28 seconds, at the best pause so far or else the quietest point', async () => {
+  const withPause = app();
+  await withPause.click('recordBtn');
+  withPause.speak(10);
+  withPause.pause(0.3);
+  withPause.speak(17.6);
+  await settle();
+  assert.equal(withPause.requests, 0);
+  withPause.speak(0.1);
+  await settle();
+  assert.equal(withPause.requests, 1);
+  assert.equal(withPause.sentRequests[0].body.get('file').size, wavSize(10_150));
+
+  const steady = app();
+  await steady.click('recordBtn');
+  steady.speak(28);
+  await settle();
+  assert.equal(steady.requests, 1);
+  assert.equal(steady.sentRequests[0].body.get('file').size, wavSize(20_000));
+});
+
+test('A long pause after 8 seconds starts a new chunk', async () => {
+  const a = app();
+  await a.click('recordBtn');
+  a.speak(9);
+  a.pause(1.1);
+  await settle();
+  assert.equal(a.requests, 0);
+  a.pause(0.2);
+  await settle();
+  assert.equal(a.requests, 1);
+  assert.equal(a.sentRequests[0].body.get('file').size, wavSize(9_600));
+});
+
+test('Chunks are transcribed one at a time and joined in order', async () => {
+  const a = app();
+  await a.click('recordBtn');
+  a.speak(19);
+  a.pause(0.6);
+  a.speak(19);
+  a.pause(0.6);
+  await settle();
+  assert.equal(a.requests, 1);
+  a.respond('Part one.');
+  await settle();
+  assert.equal(a.requests, 2);
+  const { finished } = await a.stop({ speech: 2 });
+  assert.equal(a.requests, 2);
+  a.respond('part two');
+  await settle();
+  assert.equal(a.requests, 3);
+  a.respond('第三部分。');
+  await finished;
+  assert.equal(a.get('transcript').value, 'Part one. part two第三部分。');
+});
+
+test('A failed chunk is marked and the rest of the recording is kept', async () => {
+  const a = app();
+  a.edit('Old');
+  await a.click('recordBtn');
+  a.speak(19);
+  a.pause(0.6);
+  await settle();
+  a.respondWith(null, { status: 500, jsonError: true });
+  await settle();
+  const { finished } = await a.stop({ speech: 2 });
+  a.respond('Second part.');
+  await finished;
+  assert.equal(a.get('transcript').value, '[…] Second part.');
+  assert.equal(a.copied.at(-1), '[…] Second part.');
+  assert.ok(a.statuses.includes('Part of the recording could not be transcribed and is marked […].'));
+  assert.equal(a.get('recordBtn').disabled, false);
+});
+
 test('A transient network failure succeeds on attempt two or three with the full audio and no visible error', async () => {
   for (const failures of [1, 2]) {
     const a = app();
@@ -347,7 +483,6 @@ test('A transient network failure succeeds on attempt two or three with the full
     a.get('taskSelect').value = 'translate';
     await a.click('continueBtn');
     const { finished } = await a.stop();
-    const prompt = a.sentRequests[0].body.get('prompt');
     for (let attempt = 1; attempt <= failures; attempt++) {
       await a.failRequest();
       assert.equal(a.requests, attempt);
@@ -370,11 +505,11 @@ test('A transient network failure succeeds on attempt two or three with the full
       assert.equal(request.method, 'POST');
       assert.equal(request.signal.aborted, false);
       assert.equal(request.body.get('file').name, 'audio.wav');
-      assert.equal(await request.body.get('file').text(), 'audio');
+      assert.equal(request.body.get('file').size, wavSize(1000));
       assert.equal(request.body.get('response_format'), 'json');
       assert.equal(request.body.get('language'), 'en');
       assert.equal(request.body.get('translate'), 'true');
-      assert.equal(request.body.get('prompt'), prompt);
+      assert.equal(request.body.get('prompt'), PROMPT);
     }
     a.respond('  Recovered\ntranscript.  ');
     await finished;
@@ -411,7 +546,7 @@ test('Three network failures show the existing error and leave controls usable w
   assert.equal(a.requestTimers.length, 0);
   assert.equal(a.copied.length, 0);
   await a.click('continueBtn');
-  assert.equal(a.recorders.length, 2);
+  assert.equal(a.captures.length, 2);
 });
 
 test('The 120-second timeout aborts the request, preserves text, and permits a retry', async () => {

@@ -11,9 +11,13 @@ repository stores the source code.
 ## Features
 
 - Record from your microphone with a live audio level meter.
-- Choose a language or use automatic language detection.
+- Transcribe long recordings in chunks while you speak, so only the last few
+  seconds are left to process after you stop.
+- The default language, 中文 / English, handles Chinese, English, and mixed
+  speech. Choose another language, or Auto for automatic detection.
 - Join server output lines into one paragraph and remove extra spaces between
-  Chinese characters, preserving spaces around English words.
+  Chinese characters, preserving spaces around English words and restoring
+  missing spaces after English punctuation.
 - Select Translate to translate speech into English using Whisper.
 - Start a new transcript or continue recording to append another segment on a
   new line, preserving your edits.
@@ -30,16 +34,27 @@ repository stores the source code.
 ## Use the app
 
 Open <https://tinkwhisper.com>, allow microphone access, select a language,
-and click **Start Recording**. Click **Stop Recording** to send the audio for
-transcription. Use **Continue Recording** to add to the current text.
+and click **Start Recording**. Click **Stop Recording** to finish; the text
+appears once the last chunk is transcribed. Use **Continue Recording** to add
+to the current text.
 
-The server processes one request at a time. A 30-second clip typically takes
-about 5–8 seconds to process; longer clips take proportionally longer. The app
-shows a transcribing state while waiting. Network failures are retried up to
-twice, with an 800 ms pause between attempts and a fresh 120-second timeout for
-each attempt. HTTP errors, response-reading errors, and timeouts fail immediately
-without retrying. If a request ultimately fails, a message appears and the
-previous transcript is kept so you can try again.
+While recording, the app sends audio in chunks of up to 28 seconds, each under
+Whisper's 30-second window. A chunk is cut at the next half-second pause after
+18 seconds, at any pause of 1.2 seconds or more after 8 seconds, or at 28
+seconds at the best pause found so far. Chunks are transcribed one at a time in
+order, and the combined text is applied to the transcript when you stop, so
+edits made while recording are kept. The server takes about 1.5 seconds for a
+28-second chunk, so the wait after Stop is about that long however long you
+recorded. The server processes one request at a time across all users; because
+chunks are short, another person's recording delays yours by a second or two at
+most.
+
+Network failures are retried up to twice per chunk, with an 800 ms pause
+between attempts and a fresh 120-second timeout for each attempt. HTTP errors,
+response-reading errors, and timeouts fail immediately without retrying. If
+every chunk fails, a message appears and the previous transcript is kept so you
+can try again. If only some chunks fail, the rest of the text is used and each
+failed chunk is marked `[…]`.
 
 ## Transcription backend
 
@@ -50,16 +65,25 @@ script in `index.html`:
 POST https://api.tinkwhisper.com/v1/audio/transcriptions
 ```
 
-The browser sends `multipart/form-data` containing:
+For each chunk, the browser sends `multipart/form-data` containing:
 
-- `file`: the recording, converted by the existing audio pipeline to a mono,
-  16 kHz WAV named `audio.wav`.
+- `file`: the chunk as a mono, 16 kHz, 16-bit WAV named `audio.wav`.
 - `response_format`: `json`.
-- `prompt`: a fixed hint for mixed Chinese and English speech about computer
-  networks, software engineering, and data analysis.
-- `language`: the selected language code, omitted when Auto is selected.
+- `prompt`: a short bilingual hint (`TRANSCRIBE_PROMPT`) that makes Whisper add
+  punctuation. Keep it short and in both languages: a long Chinese prompt makes
+  Whisper turn English speech into garbled Chinese, even with `language=en`.
+- `no_timestamps`: `true`. The app does not use timestamps, and skipping them
+  is about 20% faster on long audio.
+- `language`: the selected language code, or `auto` for Auto. The default `zh`
+  keeps English sentences in English when the prompt above is used; `auto`
+  costs about 1 second per chunk and tends to drop the minority language in a
+  mixed chunk.
 - `translate`: `true` when Translate is selected, using whisper.cpp's translation
   option on the same endpoint.
+
+The server runs `whisper-server` with `--vad --vad-model
+models/ggml-silero-v6.2.0.bin`, so silent chunks return empty text in a few
+milliseconds instead of being transcribed as stray words.
 
 The response is JSON, for example `{"text":"Recognized speech."}`. Requests
 send no authentication header and no model field. The browser supplies the
@@ -116,7 +140,8 @@ is held in memory for playback. Recent transcript text is saved in this
 browser's `localStorage`; if storage is unavailable, history lasts only for the
 current session.
 
-Use a modern browser supporting MediaRecorder, Web Audio, and clipboard access.
+Use a modern browser supporting Web Audio (AudioWorklet, with a ScriptProcessor
+fallback) and clipboard access.
 Microphone access requires HTTPS or localhost. If microphone access fails,
 check browser permissions. If transcription fails, check that the server is
 reachable and that you are using the production origin `https://tinkwhisper.com`.
