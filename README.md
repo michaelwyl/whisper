@@ -43,11 +43,12 @@ Whisper's 30-second window. A chunk is cut at the next half-second pause after
 18 seconds, at any pause of 1.2 seconds or more after 8 seconds, or at 28
 seconds at the best pause found so far. Chunks are transcribed one at a time in
 order, and the combined text is applied to the transcript when you stop, so
-edits made while recording are kept. The server takes about 1.5 seconds for a
+edits made while recording are kept. The server takes under a second for a
 28-second chunk, so the wait after Stop is about that long however long you
 recorded. The server processes one request at a time across all users; because
-chunks are short, another person's recording delays yours by a second or two at
-most.
+chunks are short, another person's recording delays yours by about a second at
+most. Running a second server instance does not help: both share one GPU, so
+two simultaneous requests then finish together but no sooner.
 
 Network failures are retried up to twice per chunk, with an 800 ms pause
 between attempts and a fresh 120-second timeout for each attempt. HTTP errors,
@@ -67,11 +68,15 @@ POST https://api.tinkwhisper.com/v1/audio/transcriptions
 
 For each chunk, the browser sends `multipart/form-data` containing:
 
-- `file`: the chunk as a mono, 16 kHz, 16-bit WAV named `audio.wav`.
+- `file`: the chunk as a mono, 16 kHz, 8-bit μ-law WAV named `audio.wav`. This
+  is half the size of 16-bit PCM, and the transcripts of the test clips were
+  identical either way. The playback preview stays 16-bit PCM.
 - `response_format`: `json`.
 - `prompt`: a short bilingual hint (`TRANSCRIBE_PROMPT`) that makes Whisper add
-  punctuation. Keep it short and in both languages: a long Chinese prompt makes
-  Whisper turn English speech into garbled Chinese, even with `language=en`.
+  punctuation. Keep it short and in both languages, opening in English: a long
+  Chinese prompt makes Whisper turn English speech into garbled Chinese, even
+  with `language=en`, and opening in English kept English sentences intact more
+  often than opening in Chinese.
 - `no_timestamps`: `true`. The app does not use timestamps, and skipping them
   is about 20% faster on long audio.
 - `language`: the selected language code, or `auto` for Auto. The default `zh`
@@ -83,7 +88,14 @@ For each chunk, the browser sends `multipart/form-data` containing:
 
 The server runs `whisper-server` with `--vad --vad-model
 models/ggml-silero-v6.2.0.bin`, so silent chunks return empty text in a few
-milliseconds instead of being transcribed as stray words.
+milliseconds instead of being transcribed as stray words. It is built with
+`-DWHISPER_COREML=1` and loads `models/ggml-large-v3-turbo-encoder.mlmodelc`, so
+the encoder, which is most of each request's time, runs through Core ML. This
+halves the time per chunk compared with Metal alone, with identical output.
+
+Known limitation: when one chunk holds a Chinese sentence followed by English
+sentences, Whisper sometimes drops the English. Chinese with English words
+mixed in, and chunks in a single language, are transcribed reliably.
 
 The response is JSON, for example `{"text":"Recognized speech."}`. Requests
 send no authentication header and no model field. The browser supplies the

@@ -148,7 +148,8 @@
     const TRANSCRIBE_MAX_ATTEMPTS = 3;
     const TRANSCRIBE_RETRY_DELAY_MS = 800;
     // Short and bilingual: it makes Whisper punctuate without pushing English speech into Chinese.
-    const TRANSCRIBE_PROMPT = "好的，我们开始吧。OK, let's talk about computer networks, software engineering, and data analysis.";
+    // Opening in English keeps English sentences in English more reliably than opening in Chinese.
+    const TRANSCRIBE_PROMPT = "OK, let's get started. 好的，我们开始吧。We'll talk about computer networks, software engineering, and data analysis.";
 
     // Audio is sent in chunks while recording, so after Stop only the last chunk is left to transcribe.
     // Chunks stay under Whisper's 30-second window and are cut at pauses where possible.
@@ -593,6 +594,52 @@
       return new Blob([wavBuffer], { type: 'audio/wav' });
     }
 
+    // G.711 μ-law for one 16-bit sample, as in the reference implementation (14-bit input).
+    function linearToMulaw(sample) {
+      let value = sample >> 2;
+      const mask = value < 0 ? 0x7F : 0xFF;
+      value = Math.min(Math.abs(value), 8159) + 33;
+      let segment = 0;
+      while (segment < 8 && value >= (0x40 << segment)) segment++;
+      if (segment === 8) return 0x7F ^ mask;
+      return ((segment << 4) | ((value >> (segment + 1)) & 0x0F)) ^ mask;
+    }
+
+    // Encode 16 kHz mono samples as an 8-bit μ-law WAV for upload: half the size of 16-bit PCM,
+    // and Whisper's output was identical in testing.
+    function encodeMulawWav(pcmData) {
+      const wavBuffer = new ArrayBuffer(58 + pcmData.length);
+      const view = new DataView(wavBuffer);
+
+      const writeString = (offset, str) => {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      };
+      writeString(0, 'RIFF');
+      view.setUint32(4, 50 + pcmData.length, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 18, true);
+      view.setUint16(20, 7, true);      // WAVE_FORMAT_MULAW
+      view.setUint16(22, 1, true);
+      view.setUint32(24, 16000, true);
+      view.setUint32(28, 16000, true);
+      view.setUint16(32, 1, true);
+      view.setUint16(34, 8, true);
+      view.setUint16(36, 0, true);
+      writeString(38, 'fact');          // required for non-PCM WAV
+      view.setUint32(42, 4, true);
+      view.setUint32(46, pcmData.length, true);
+      writeString(50, 'data');
+      view.setUint32(54, pcmData.length, true);
+
+      for (let i = 0; i < pcmData.length; i++) {
+        const s = Math.max(-1, Math.min(1, pcmData[i]));
+        view.setUint8(58 + i, linearToMulaw((s < 0 ? s * 0x8000 : s * 0x7FFF) | 0));
+      }
+
+      return new Blob([wavBuffer], { type: 'audio/wav' });
+    }
+
     function normalizeTranscript(text) {
       return text
         .replace(/\s*\n\s*/g, ' ')
@@ -671,7 +718,7 @@
       recording.queue = recording.queue.then(async () => {
         if (recording.cancelled) return;
         try {
-          recording.results[index] = await requestTranscription(encodeWav(await audio), recording);
+          recording.results[index] = await requestTranscription(encodeMulawWav(await audio), recording);
         } catch (error) {
           if (recording.cancelled) return;
           recording.results[index] = null;

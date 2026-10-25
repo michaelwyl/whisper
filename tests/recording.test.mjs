@@ -5,11 +5,11 @@ import vm from 'node:vm';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-const PROMPT = "好的，我们开始吧。OK, let's talk about computer networks, software engineering, and data analysis.";
+const PROMPT = "OK, let's get started. 好的，我们开始吧。We'll talk about computer networks, software engineering, and data analysis.";
 // The capture stub runs at 1 kHz and resampling is skipped, so one second is 1000 samples
-// and a chunk of n samples is sent as a WAV of 44 + 2n bytes.
+// and a chunk of n samples is uploaded as a μ-law WAV of 58 + n bytes.
 const RATE = 1000;
-const wavSize = samples => 44 + 2 * samples;
+const uploadSize = samples => 58 + samples;
 
 async function settle() {
   for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
@@ -104,6 +104,7 @@ function app({ micAllowed = true } = {}) {
   get('taskSelect').value = 'transcribe';
   return {
     get, click, copied, captures, sentRequests, warnings,
+    run: code => vm.runInContext(code, context),
     get capture() { return captures.at(-1); },
     get requests() { return requests; },
     get requestTimers() { return [...timers.values()].filter(timer => timer.delay === 120_000); },
@@ -315,7 +316,7 @@ test('Transcription sends the WAV, prompt and options to the configured server w
   const file = request.body.get('file');
   assert.equal(file.name, 'audio.wav');
   assert.equal(file.type, 'audio/wav');
-  assert.equal(file.size, wavSize(1500));
+  assert.equal(file.size, uploadSize(1500));
   assert.equal(a.requestTimers.length, 1);
   assert.equal(a.get('transcribeProgress').classList.contains('hidden'), false);
   assert.ok(a.statuses.includes('Transcribing...'));
@@ -326,6 +327,37 @@ test('Transcription sends the WAV, prompt and options to the configured server w
   assert.equal(a.requestTimers.length, 0);
   assert.equal(a.get('transcribeProgress').classList.contains('hidden'), true);
   assert.equal(a.get('mediaPreview').classList.contains('hidden'), false);
+});
+
+test('Uploads are μ-law WAVs that match the reference G.711 encoder', async () => {
+  const a = app();
+  // Expected bytes from Python's audioop.lin2ulaw, which follows the reference G.711 code.
+  const samples = [0, 1, -1, 2, -2, 31, -31, 32, -32, 100, -100, 1000, -1000, 5000, -5000,
+    12345, -12345, 32635, -32635, 32767, -32768];
+  const expected = [255, 255, 126, 255, 126, 251, 123, 251, 123, 242, 114, 206, 78, 171, 43,
+    151, 23, 128, 0, 128, 0];
+  assert.deepEqual(samples.map(sample => a.run(`linearToMulaw(${sample})`)), expected);
+
+  await a.click('recordBtn');
+  const { finished } = await a.stop({ speech: 0.5 });
+  const bytes = new Uint8Array(await a.sentRequests[0].body.get('file').arrayBuffer());
+  const view = new DataView(bytes.buffer);
+  const text = (offset, length) => String.fromCharCode(...bytes.slice(offset, offset + length));
+  assert.equal(text(0, 4), 'RIFF');
+  assert.equal(view.getUint32(4, true), bytes.length - 8);
+  assert.equal(text(8, 8), 'WAVEfmt ');
+  assert.equal(view.getUint16(20, true), 7);
+  assert.equal(view.getUint16(22, true), 1);
+  assert.equal(view.getUint32(24, true), 16000);
+  assert.equal(view.getUint16(34, true), 8);
+  assert.equal(text(38, 4), 'fact');
+  assert.equal(view.getUint32(46, true), 500);
+  assert.equal(text(50, 4), 'data');
+  assert.equal(view.getUint32(54, true), 500);
+  // speak() records a constant 0.3, which is 9830 as a 16-bit sample.
+  assert.ok(bytes.slice(58).every(byte => byte === a.run('linearToMulaw(9830)')));
+  a.respond('ok');
+  await finished;
 });
 
 test('Auto sends language=auto so the server detects the language', async () => {
@@ -384,7 +416,7 @@ test('Long recordings are sent in chunks while recording, cut in the middle of a
   await settle();
   // Cut once the pause reaches 0.5 s, at its middle: 19 s of speech plus 0.25 s.
   assert.equal(a.requests, 1);
-  assert.equal(a.sentRequests[0].body.get('file').size, wavSize(19_250));
+  assert.equal(a.sentRequests[0].body.get('file').size, uploadSize(19_250));
   assert.equal(a.get('recordBtn').textContent, 'Stop Recording');
   a.respond('第一部分。');
   await settle();
@@ -392,7 +424,7 @@ test('Long recordings are sent in chunks while recording, cut in the middle of a
   const { finished } = await a.stop({ speech: 5 });
   assert.equal(a.requests, 2);
   // The rest of the pause (0.35 s) and the last 5 s.
-  assert.equal(a.sentRequests[1].body.get('file').size, wavSize(5_350));
+  assert.equal(a.sentRequests[1].body.get('file').size, uploadSize(5_350));
   a.speak(30);
   a.respond('Second part.');
   await finished;
@@ -412,14 +444,14 @@ test('A chunk is forced at 28 seconds, at the best pause so far or else the quie
   withPause.speak(0.1);
   await settle();
   assert.equal(withPause.requests, 1);
-  assert.equal(withPause.sentRequests[0].body.get('file').size, wavSize(10_150));
+  assert.equal(withPause.sentRequests[0].body.get('file').size, uploadSize(10_150));
 
   const steady = app();
   await steady.click('recordBtn');
   steady.speak(28);
   await settle();
   assert.equal(steady.requests, 1);
-  assert.equal(steady.sentRequests[0].body.get('file').size, wavSize(20_000));
+  assert.equal(steady.sentRequests[0].body.get('file').size, uploadSize(20_000));
 });
 
 test('A long pause after 8 seconds starts a new chunk', async () => {
@@ -432,7 +464,7 @@ test('A long pause after 8 seconds starts a new chunk', async () => {
   a.pause(0.2);
   await settle();
   assert.equal(a.requests, 1);
-  assert.equal(a.sentRequests[0].body.get('file').size, wavSize(9_600));
+  assert.equal(a.sentRequests[0].body.get('file').size, uploadSize(9_600));
 });
 
 test('Chunks are transcribed one at a time and joined in order', async () => {
@@ -505,7 +537,7 @@ test('A transient network failure succeeds on attempt two or three with the full
       assert.equal(request.method, 'POST');
       assert.equal(request.signal.aborted, false);
       assert.equal(request.body.get('file').name, 'audio.wav');
-      assert.equal(request.body.get('file').size, wavSize(1000));
+      assert.equal(request.body.get('file').size, uploadSize(1000));
       assert.equal(request.body.get('response_format'), 'json');
       assert.equal(request.body.get('language'), 'en');
       assert.equal(request.body.get('translate'), 'true');
