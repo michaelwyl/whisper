@@ -5,6 +5,9 @@ self-hosted Whisper server. The server runs `whisper.cpp` behind Caddy and is
 served from `api.tinkwhisper.com` via Cloudflare Tunnel. No API key or browser
 model download is needed.
 
+The frontend is hosted on Cloudflare at <https://tinkwhisper.com>. This GitHub
+repository stores the source code.
+
 ## Features
 
 - Record from your microphone with a live audio level meter.
@@ -26,7 +29,7 @@ model download is needed.
 
 ## Use the app
 
-Open <https://michaelwyl.github.io>, allow microphone access, select a language,
+Open <https://tinkwhisper.com>, allow microphone access, select a language,
 and click **Start Recording**. Click **Stop Recording** to send the audio for
 transcription. Use **Continue Recording** to add to the current text.
 
@@ -62,10 +65,10 @@ The response is JSON, for example `{"text":"Recognized speech."}`. Requests
 send no authentication header and no model field. The browser supplies the
 multipart boundary and Origin header automatically.
 
-**The server only allows the origin `https://michaelwyl.github.io`.** Requests
-from localhost, preview hosts, or other origins are rejected with HTTP 403.
-Test real transcription from the deployed GitHub Pages site. To support another
-origin, update the server's CORS allowlist.
+**The API allows the production origin `https://tinkwhisper.com`.** Test real
+transcription from the Cloudflare-hosted site. To support localhost, preview
+hosts, or other origins, update the server's CORS allowlist. The browser sets
+the Origin header automatically.
 
 ## Local development and checks
 
@@ -79,7 +82,8 @@ npm run dev
 ```
 
 The development server opens at <http://localhost:3000>. The UI can be exercised
-locally, but real transcription is blocked by the server's origin restriction.
+locally; real transcription also requires the development origin to be allowed
+by the server's CORS configuration.
 The convenience scripts `./start.sh` and `start.bat` also start the dev server.
 
 ```bash
@@ -91,16 +95,19 @@ npm run preview
 Tests use mocked browser APIs and network requests, so they do not require the
 live transcription server. Build output goes to `dist/`.
 
-## GitHub Pages deployment
+## Cloudflare deployment
 
-The root `index.html` is ready to serve as a static page; no build step,
-environment variables, or secrets are required. Publish it through the existing
-GitHub Pages deployment. The optional Vite build also produces a standalone
-`dist/index.html`.
+Cloudflare serves the frontend at <https://tinkwhisper.com>. Manage the frontend
+deployment and custom domain in Cloudflare, and keep the source code in this
+GitHub repository.
 
-After deployment, record a short clip at <https://michaelwyl.github.io> and check
-that the browser Network tab shows a POST to the configured transcription
-endpoint returning HTTP 200, and that its text appears in the transcript box.
+The root `index.html` is ready to serve as a static page. It requires no build
+step, environment variables, or secrets. If Cloudflare builds the site, use
+`npm run build` as the build command and `dist/` as the output directory.
+
+After deployment, record a short clip at <https://tinkwhisper.com> and check that
+the browser Network tab shows a POST to `api.tinkwhisper.com` returning HTTP 200,
+and that its text appears in the transcript box.
 
 ## Storage, privacy, and browser requirements
 
@@ -112,7 +119,7 @@ current session.
 Use a modern browser supporting MediaRecorder, Web Audio, and clipboard access.
 Microphone access requires HTTPS or localhost. If microphone access fails,
 check browser permissions. If transcription fails, check that the server is
-reachable and that you are using the allowed GitHub Pages origin.
+reachable and that you are using the production origin `https://tinkwhisper.com`.
 If the browser reports multiple `Access-Control-Allow-Origin` values, configure
 Caddy to remove the upstream server's header before setting the allowed origin.
 
