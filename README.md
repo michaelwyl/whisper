@@ -2,7 +2,8 @@
 
 A static browser app that records microphone audio and transcribes it using a
 self-hosted Whisper server. The server runs `whisper.cpp` behind Caddy and is
-exposed through Tailscale Funnel. No API key or browser model download is needed.
+served from `api.tinkwhisper.com` via Cloudflare Tunnel. No API key or browser
+model download is needed.
 
 ## Features
 
@@ -43,7 +44,7 @@ The endpoint is configured once, in `TRANSCRIBE_URL` near the top of the inline
 script in `index.html`:
 
 ```text
-POST https://yilins-mac-mini.tail73950a.ts.net/v1/audio/transcriptions
+POST https://api.tinkwhisper.com/v1/audio/transcriptions
 ```
 
 The browser sends `multipart/form-data` containing:

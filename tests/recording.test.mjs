@@ -273,7 +273,7 @@ test('Transcription sends the WAV and selected language to the configured server
   await a.click('recordBtn');
   const { finished } = await a.stop();
   const request = a.sentRequests[0];
-  assert.equal(request.url, 'https://yilins-mac-mini.tail73950a.ts.net/v1/audio/transcriptions');
+  assert.equal(request.url, 'https://api.tinkwhisper.com/v1/audio/transcriptions');
   assert.equal(request.method, 'POST');
   assert.equal(request.headers, undefined);
   assert.equal(request.signal.aborted, false);
@@ -330,7 +330,7 @@ test('Translate uses the same endpoint with the whisper.cpp translation option',
   await a.click('recordBtn');
   const { finished } = await a.stop();
   const request = a.sentRequests[0];
-  assert.equal(request.url, 'https://yilins-mac-mini.tail73950a.ts.net/v1/audio/transcriptions');
+  assert.equal(request.url, 'https://api.tinkwhisper.com/v1/audio/transcriptions');
   assert.equal(request.body.get('translate'), 'true');
   assert.equal(request.body.get('response_format'), 'json');
   assert.ok(a.statuses.includes('Translating...'));
@@ -366,7 +366,7 @@ test('A transient network failure succeeds on attempt two or three with the full
     assert.equal(a.requests, failures + 1);
     assert.equal(new Set(a.sentRequests.map(request => request.signal)).size, failures + 1);
     for (const request of a.sentRequests) {
-      assert.equal(request.url, 'https://yilins-mac-mini.tail73950a.ts.net/v1/audio/transcriptions');
+      assert.equal(request.url, 'https://api.tinkwhisper.com/v1/audio/transcriptions');
       assert.equal(request.method, 'POST');
       assert.equal(request.signal.aborted, false);
       assert.equal(request.body.get('file').name, 'audio.wav');
