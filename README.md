@@ -87,8 +87,13 @@ For each chunk, the browser sends `multipart/form-data` containing:
   option on the same endpoint.
 
 The server runs `whisper-server` with `--vad --vad-model
-models/ggml-silero-v6.2.0.bin`, so silent chunks return empty text in a few
-milliseconds instead of being transcribed as stray words. It is built with
+models/ggml-silero-v6.2.0.bin --vad-threshold 0.2 --vad-speech-pad-ms 200`, so
+silent chunks return empty text in a few milliseconds instead of being
+transcribed as stray words (without VAD, background noise comes back as
+"好的。" from the prompt). The default threshold of 0.5 with 30 ms padding
+dropped whispered and very quiet speech; 0.2 with 200 ms padding kept it in
+testing while still returning nothing for room noise, hiss, fan noise, keyboard
+clicks, and breathing. Lower thresholds such as 0.1 let breathing through. It is built with
 `-DWHISPER_COREML=1` and loads `models/ggml-large-v3-turbo-encoder.mlmodelc`, so
 the encoder, which is most of each request's time, runs through Core ML. This
 halves the time per chunk compared with Metal alone, with identical output.
