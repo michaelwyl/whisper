@@ -87,18 +87,19 @@ For each chunk, the browser sends `multipart/form-data` containing:
   option on the same endpoint.
 
 The server runs `whisper-server` with `--vad --vad-model
-models/ggml-silero-v6.2.0.bin --vad-threshold 0.2 --vad-speech-pad-ms 1500
---vad-min-silence-duration-ms 2000`, so silent chunks return empty text in a
-few milliseconds instead of being transcribed as stray words (without VAD,
-background noise comes back as "好的。" from the prompt). VAD here only needs to
-reject chunks with no speech and cut long silences; trimming short pauses saves
-no time, because each chunk fits in one 30-second window anyway. The defaults
-(threshold 0.5, 30 ms padding, 100 ms minimum silence) cut whispered speech
-into fragments, dropping words in the middle of a sentence. With the settings
-above, whispers stayed whole in testing, while room noise, hiss, fan noise,
-keyboard clicks, and breathing still returned nothing. Lower thresholds such as
-0.1 let breathing through. Whispers in noticeable background noise can still be
-missed entirely, since VAD detects no speech in them at all. It is built with
+models/ggml-silero-v6.2.0.bin --vad-threshold 0.2 --vad-speech-pad-ms 30000`.
+VAD acts only as a gate: a chunk with no detected speech returns empty text in
+a few milliseconds instead of being transcribed as stray words (without VAD,
+background noise comes back as "好的。" from the prompt), and since the padding
+is longer than any chunk, a chunk with any detected speech is transcribed whole.
+Trimming would save no time, because each chunk fits in one 30-second window
+anyway, and it loses whispered speech: VAD often hears only the first few
+whispered words, so with the defaults (threshold 0.5, 30 ms padding) and even
+with 1.5 s padding, the rest of a whispered sentence was cut. Room noise, hiss,
+fan noise, keyboard clicks, and breathing still returned nothing in testing.
+Lower thresholds such as 0.1 let breathing through. A whisper in noticeable
+background noise can still be missed entirely if VAD detects no speech in it at
+all. It is built with
 `-DWHISPER_COREML=1` and loads `models/ggml-large-v3-turbo-encoder.mlmodelc`, so
 the encoder, which is most of each request's time, runs through Core ML. This
 halves the time per chunk compared with Metal alone, with identical output.
